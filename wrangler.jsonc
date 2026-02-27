@@ -2,10 +2,6 @@
   "name": "firmware-wars-api",
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "browser": {
-    "binding": "BROWSER"
-  },
   "r2_buckets": [
     {
       "binding": "ASSETS",
@@ -17,11 +13,5 @@
       "binding": "META",
       "id": "459ee8f8ddb846cfb0d86221fcab04d0"
     }
-  ],
-  "vars": {
-    // URL pública de la app Angular.
-    "APP_URL": "https://firmware-wars-api.josepec.eu"
-  }
-  // GENERATE_SECRET se gestiona como secret:
-  //   npx wrangler secret put GENERATE_SECRET
+  ]
 }

@@ -1,82 +1,155 @@
 #!/usr/bin/env node
 /**
- * Publica una nueva versión del manual PDF.
+ * Genera el PDF del manual localmente y lo publica en R2.
  *
  * Uso:
- *   node scripts/publish-pdf.mjs patch    # 1.0.0 → 1.0.1  (correcciones)
- *   node scripts/publish-pdf.mjs minor    # 1.0.0 → 1.1.0  (nuevo contenido)
- *   node scripts/publish-pdf.mjs major    # 1.0.0 → 2.0.0  (cambio importante)
+ *   npm run publish -- patch    # 1.0.0 → 1.0.1  (corrección)
+ *   npm run publish -- minor    # 1.0.0 → 1.1.0  (nuevo contenido)
+ *   npm run publish -- major    # 1.0.0 → 2.0.0  (cambio importante)
  *
- * Requiere en .dev.vars (o variables de entorno):
- *   WORKER_URL=https://firmware-wars-api.josepec.eu
- *   GENERATE_SECRET=tu_secreto
+ * Por defecto apunta a http://localhost:4200 (ng serve corriendo).
+ * Para generar desde producción:
+ *   APP_URL=https://firmware-wars.josepec.eu npm run publish -- patch
  */
 
-const bump = process.argv[2] ?? 'patch';
+import puppeteer from 'puppeteer';
+import { spawnSync } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const KV_NAMESPACE_ID = '459ee8f8ddb846cfb0d86221fcab04d0';
+const R2_BUCKET = 'firmware-wars-assets';
+
+/* ── Versión ──────────────────────────────────────────────── */
+
+function getCurrentVersion() {
+  const result = spawnSync(
+    'npx',
+    ['wrangler', 'kv', 'key', 'get', '--namespace-id', KV_NAMESPACE_ID, 'version'],
+    { cwd: ROOT, encoding: 'utf-8' },
+  );
+  if (result.status !== 0 || !result.stdout?.trim()) {
+    return { major: 0, minor: 0, patch: 0 };
+  }
+  try {
+    return JSON.parse(result.stdout.trim());
+  } catch {
+    return { major: 0, minor: 0, patch: 0 };
+  }
+}
+
+function bumpVersion(v, bump) {
+  if (bump === 'major') return { major: v.major + 1, minor: 0, patch: 0 };
+  if (bump === 'minor') return { major: v.major, minor: v.minor + 1, patch: 0 };
+  return { major: v.major, minor: v.minor, patch: v.patch + 1 };
+}
+
+function ver(v) {
+  return `${v.major}.${v.minor}.${v.patch}`;
+}
+
+/* ── Main ─────────────────────────────────────────────────── */
+
+const bump = process.argv[2] ?? 'patch';
 if (!['major', 'minor', 'patch'].includes(bump)) {
   console.error(`❌ Tipo de bump inválido: "${bump}". Usa major, minor o patch.`);
   process.exit(1);
 }
 
-// Leer variables del entorno o de .dev.vars
-let workerUrl = process.env.WORKER_URL;
-let secret = process.env.GENERATE_SECRET;
+const appUrl = process.env.APP_URL ?? 'http://localhost:4200';
+const printUrl = `${appUrl}/docs/print?worker=1`;
 
-if (!workerUrl || !secret) {
-  // Intentar leer .dev.vars
-  try {
-    const { readFileSync } = await import('fs');
-    const { fileURLToPath } = await import('url');
-    const { dirname, join } = await import('path');
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const devVars = readFileSync(join(dir, '..', '.dev.vars'), 'utf-8');
-    for (const line of devVars.split('\n')) {
-      const [key, ...rest] = line.split('=');
-      const value = rest.join('=').trim();
-      if (key?.trim() === 'WORKER_URL' && !workerUrl) workerUrl = value;
-      if (key?.trim() === 'GENERATE_SECRET' && !secret) secret = value;
-    }
-  } catch {
-    // .dev.vars no existe, continuamos con lo que tengamos
-  }
-}
+const current = getCurrentVersion();
+const next = bumpVersion(current, bump);
+const version = ver(next);
+const tmpFile = join(tmpdir(), `firmware-wars-manual-v${version}.pdf`);
 
-if (!workerUrl) {
-  console.error('❌ WORKER_URL no definida. Añádela a .dev.vars o como variable de entorno.');
-  process.exit(1);
-}
-if (!secret) {
-  console.error('❌ GENERATE_SECRET no definida. Añádela a .dev.vars o como variable de entorno.');
-  process.exit(1);
-}
+console.log(`\n📄 Generando PDF v${version}  (${ver(current)} → ${version})`);
+console.log(`   Fuente: ${printUrl}\n`);
 
-console.log(`📄 Generando PDF (bump: ${bump})...`);
-console.log(`   Worker: ${workerUrl}`);
+/* 1 — Generar PDF con Puppeteer local */
+const browser = await puppeteer.launch({ headless: true });
+const page = await browser.newPage();
 
-const url = `${workerUrl}/generate?bump=${bump}`;
-
-let response;
 try {
-  response = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${secret}` },
+  await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
+  await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+
+  const pdf = await page.pdf({
+    format: 'A5',
+    printBackground: true,
+    displayHeaderFooter: true,
+    headerTemplate: `
+      <div style="
+        width:100%;box-sizing:border-box;padding:0 1.5cm;height:0.85cm;
+        display:flex;align-items:center;justify-content:space-between;
+        font-family:monospace;font-size:7pt;color:#3a6640;
+        border-bottom:0.75pt solid #b8deba;">
+        <span>FIRMWARE WARS</span>
+        <span style="color:#6ea878;">◆</span>
+        <span>System Manual v${version}</span>
+      </div>`,
+    footerTemplate: `
+      <div style="
+        width:100%;box-sizing:border-box;padding:0 1.5cm;height:0.85cm;
+        display:flex;align-items:center;justify-content:space-between;
+        font-family:monospace;font-size:6pt;color:#4a7a52;
+        border-top:0.75pt solid #b8deba;">
+        <span>28ª FIRMWARE WARS — Core Combat System</span>
+        <span>
+          <span class="pageNumber"></span>
+          <span style="color:#b8deba;"> / </span>
+          <span class="totalPages"></span>
+        </span>
+      </div>`,
+    margin: { top: '1.5cm', right: '1.5cm', bottom: '1.2cm', left: '1.5cm' },
   });
-} catch (err) {
-  console.error(`❌ Error de red: ${err.message}`);
+
+  writeFileSync(tmpFile, pdf);
+  console.log(`✔ PDF generado  (${(pdf.byteLength / 1024).toFixed(1)} KB)`);
+} finally {
+  await browser.close();
+}
+
+/* 2 — Subir a R2 */
+console.log(`☁️  Subiendo a R2...`);
+const r2Result = spawnSync(
+  'npx',
+  [
+    'wrangler', 'r2', 'object', 'put',
+    `${R2_BUCKET}/manual-v${version}.pdf`,
+    '--file', tmpFile,
+    '--content-type', 'application/pdf',
+  ],
+  { cwd: ROOT, stdio: 'inherit' },
+);
+if (r2Result.status !== 0) {
+  console.error('❌ Error subiendo a R2');
   process.exit(1);
 }
 
-const body = await response.text();
-
-if (!response.ok) {
-  console.error(`❌ Error ${response.status}: ${body}`);
+/* 3 — Actualizar versión en KV */
+console.log(`🔑 Actualizando versión en KV...`);
+const kvResult = spawnSync(
+  'npx',
+  [
+    'wrangler', 'kv', 'key', 'put',
+    '--namespace-id', KV_NAMESPACE_ID,
+    'version', JSON.stringify(next),
+  ],
+  { cwd: ROOT, stdio: 'inherit' },
+);
+if (kvResult.status !== 0) {
+  console.error('❌ Error actualizando KV');
   process.exit(1);
 }
 
-const result = JSON.parse(body);
-console.log(`✅ PDF publicado correctamente`);
-console.log(`   Versión : v${result.version}`);
-console.log(`   Fichero : ${result.key}`);
-console.log(`   Tamaño  : ${(result.size / 1024).toFixed(1)} KB`);
-console.log(`   URL     : ${workerUrl}/pdf`);
+/* 4 — Limpiar */
+unlinkSync(tmpFile);
+
+console.log(`\n✅ Manual publicado correctamente`);
+console.log(`   Versión : v${version}`);
+console.log(`   URL     : https://firmware-wars-api.josepec.eu/pdf\n`);

@@ -7,11 +7,9 @@
     "deploy": "wrangler deploy",
     "publish": "node scripts/publish-pdf.mjs"
   },
-  "dependencies": {
-    "@cloudflare/puppeteer": "^1.0.0"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
+    "puppeteer": "^23.0.0",
     "typescript": "^5.0.0",
     "wrangler": "^4.69.0"
   }
