@@ -26,7 +26,7 @@ export default {
 
     const { pathname } = new URL(request.url);
 
-    /* ── GET /pdf — sirve la última versión desde R2 ────────── */
+    /* ── GET /pdf — redirige a la URL versionada ───────────── */
     if (pathname === '/pdf') {
       const meta = await env.META.get<VersionMeta>('version', 'json');
 
@@ -38,6 +38,20 @@ export default {
       }
 
       const version = versionString(meta);
+      return new Response(null, {
+        status: 302,
+        headers: {
+          ...CORS_HEADERS,
+          'Location': `/pdf/v${version}`,
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+
+    /* ── GET /pdf/v{version} — sirve un PDF concreto desde R2 ─ */
+    const versionMatch = pathname.match(/^\/pdf\/v([\d.]+)$/);
+    if (versionMatch) {
+      const version = versionMatch[1];
       const object = await env.ASSETS.get(`manual-v${version}.pdf`);
 
       if (!object) {
@@ -52,7 +66,7 @@ export default {
           ...CORS_HEADERS,
           'Content-Type': 'application/pdf',
           'Content-Disposition': `attachment; filename="firmware-wars-manual-v${version}.pdf"`,
-          'Cache-Control': 'public, max-age=86400',
+          'Cache-Control': 'public, max-age=31536000, immutable',
         },
       });
     }
