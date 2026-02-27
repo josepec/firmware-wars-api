@@ -28,7 +28,7 @@ const R2_BUCKET = 'firmware-wars-assets';
 function getCurrentVersion() {
   const result = spawnSync(
     'npx',
-    ['wrangler', 'kv', 'key', 'get', '--namespace-id', KV_NAMESPACE_ID, 'version'],
+    ['wrangler', 'kv', 'key', 'get', '--namespace-id', KV_NAMESPACE_ID, 'version', '--remote'],
     { cwd: ROOT, encoding: 'utf-8', shell: true },
   );
   if (result.status !== 0 || !result.stdout?.trim()) {
@@ -122,6 +122,7 @@ const r2Result = spawnSync(
     'wrangler', 'r2', 'object', 'put',
     `${R2_BUCKET}/manual-v${version}.pdf`,
     '--file', tmpFile,
+    '--remote',
   ],
   { cwd: ROOT, encoding: 'utf-8', shell: true },
 );
@@ -140,6 +141,7 @@ const kvResult = spawnSync(
     'wrangler', 'kv', 'key', 'put',
     '--namespace-id', KV_NAMESPACE_ID,
     'version', JSON.stringify(next),
+    '--remote',
   ],
   { cwd: ROOT, encoding: 'utf-8', shell: true },
 );
