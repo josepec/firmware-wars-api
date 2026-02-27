@@ -22,7 +22,7 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
-    const appUrl = env.APP_URL ?? 'https://firmware-wars.pages.dev';
+    const appUrl = env.APP_URL ?? 'https://firmware-wars-api.josepec.eu';
     const printUrl = `${appUrl}/docs/print`;
 
     const browser = await puppeteer.launch(env.BROWSER);

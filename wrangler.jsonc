@@ -2,11 +2,11 @@
   "name": "firmware-wars-api",
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
   "browser": {
     "binding": "BROWSER"
   },
   "vars": {
-    // URL pública de la app Angular. Cambiar al dominio real al desplegar.
-    "APP_URL": "https://firmware-wars.pages.dev"
+    "APP_URL": "https://firmware-wars-api.josepec.eu"
   }
 }
