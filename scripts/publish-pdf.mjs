@@ -29,7 +29,7 @@ function getCurrentVersion() {
   const result = spawnSync(
     'npx',
     ['wrangler', 'kv', 'key', 'get', '--namespace-id', KV_NAMESPACE_ID, 'version'],
-    { cwd: ROOT, encoding: 'utf-8' },
+    { cwd: ROOT, encoding: 'utf-8', shell: true },
   );
   if (result.status !== 0 || !result.stdout?.trim()) {
     return { major: 0, minor: 0, patch: 0 };
@@ -123,7 +123,7 @@ const r2Result = spawnSync(
     `${R2_BUCKET}/manual-v${version}.pdf`,
     '--file', tmpFile,
   ],
-  { cwd: ROOT, encoding: 'utf-8' },
+  { cwd: ROOT, encoding: 'utf-8', shell: true },
 );
 process.stdout.write(r2Result.stdout ?? '');
 process.stderr.write(r2Result.stderr ?? '');
@@ -141,7 +141,7 @@ const kvResult = spawnSync(
     '--namespace-id', KV_NAMESPACE_ID,
     'version', JSON.stringify(next),
   ],
-  { cwd: ROOT, encoding: 'utf-8' },
+  { cwd: ROOT, encoding: 'utf-8', shell: true },
 );
 process.stdout.write(kvResult.stdout ?? '');
 process.stderr.write(kvResult.stderr ?? '');
