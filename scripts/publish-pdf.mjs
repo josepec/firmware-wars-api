@@ -101,7 +101,7 @@ if (!['major', 'minor', 'patch'].includes(bump)) {
   process.exit(1);
 }
 
-const appUrl = process.env.APP_URL ?? 'http://localhost:4200';
+const appUrl = process.env.APP_URL ?? 'https://firmware-wars.josepec.eu';
 const printUrl = `${appUrl}/docs/print?worker=1`;
 
 const current = getCurrentVersion();
