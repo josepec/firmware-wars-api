@@ -123,10 +123,12 @@ const r2Result = spawnSync(
     `${R2_BUCKET}/manual-v${version}.pdf`,
     '--file', tmpFile,
   ],
-  { cwd: ROOT, stdio: 'inherit' },
+  { cwd: ROOT, encoding: 'utf-8' },
 );
+process.stdout.write(r2Result.stdout ?? '');
+process.stderr.write(r2Result.stderr ?? '');
 if (r2Result.status !== 0) {
-  console.error('❌ Error subiendo a R2');
+  console.error(`❌ Error subiendo a R2 (exit code: ${r2Result.status})`);
   process.exit(1);
 }
 
@@ -139,10 +141,12 @@ const kvResult = spawnSync(
     '--namespace-id', KV_NAMESPACE_ID,
     'version', JSON.stringify(next),
   ],
-  { cwd: ROOT, stdio: 'inherit' },
+  { cwd: ROOT, encoding: 'utf-8' },
 );
+process.stdout.write(kvResult.stdout ?? '');
+process.stderr.write(kvResult.stderr ?? '');
 if (kvResult.status !== 0) {
-  console.error('❌ Error actualizando KV');
+  console.error(`❌ Error actualizando KV (exit code: ${kvResult.status})`);
   process.exit(1);
 }
 
