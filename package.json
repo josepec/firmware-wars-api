@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "publish": "node scripts/publish-pdf.mjs"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.0"
