@@ -122,7 +122,6 @@ const r2Result = spawnSync(
     'wrangler', 'r2', 'object', 'put',
     `${R2_BUCKET}/manual-v${version}.pdf`,
     '--file', tmpFile,
-    '--content-type', 'application/pdf',
   ],
   { cwd: ROOT, stdio: 'inherit' },
 );
