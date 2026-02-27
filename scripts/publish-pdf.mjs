@@ -14,7 +14,7 @@
 
 import puppeteer from 'puppeteer';
 import { spawnSync } from 'child_process';
-import { writeFileSync, unlinkSync } from 'fs';
+import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -133,18 +133,23 @@ if (r2Result.status !== 0) {
   process.exit(1);
 }
 
-/* 3 — Actualizar versión en KV */
+/* 3 — Actualizar versión en KV (via fichero para evitar problemas con
+        las comillas en cmd.exe de Windows al pasar JSON inline)        */
 console.log(`🔑 Actualizando versión en KV...`);
+const kvTmpFile = join(tmpdir(), `fw-version-${Date.now()}.json`);
+writeFileSync(kvTmpFile, JSON.stringify(next));
 const kvResult = spawnSync(
   'npx',
   [
     'wrangler', 'kv', 'key', 'put',
     '--namespace-id', KV_NAMESPACE_ID,
-    'version', JSON.stringify(next),
+    'version',
+    '--path', kvTmpFile,
     '--remote',
   ],
   { cwd: ROOT, encoding: 'utf-8', shell: true },
 );
+unlinkSync(kvTmpFile);
 process.stdout.write(kvResult.stdout ?? '');
 process.stderr.write(kvResult.stderr ?? '');
 if (kvResult.status !== 0) {
