@@ -23,19 +23,22 @@ export default {
     }
 
     const appUrl = env.APP_URL ?? 'https://firmware-wars-api.josepec.eu';
-    const printUrl = `${appUrl}/docs/print`;
+    /* ?worker=1 le indica al componente Angular que no llame a window.print()
+       ni navegue de vuelta a /docs, evitando que la página desaparezca
+       antes de que page.pdf() termine. */
+    const printUrl = `${appUrl}/docs/print?worker=1`;
 
     const browser = await puppeteer.launch(env.BROWSER);
     const page = await browser.newPage();
 
     try {
-      /* 1 — Navegar a la página de impresión de la app Angular */
-      await page.goto(printUrl, { waitUntil: 'networkidle0', timeout: 45_000 });
+      /* 1 — Navegar a la página de impresión con modo Worker activado */
+      await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
 
       /* 2 — Esperar a que el componente Angular señale que todos los
               markdown están cargados y el layout está calculado.
               El componente pone data-pdf-ready en <body> cuando termina. */
-      await page.waitForSelector('body[data-pdf-ready]', { timeout: 45_000 });
+      await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
 
       /* 3 — Generar PDF A5 con cabecera y pie nativos de Chromium.
               Los <span class="pageNumber"> y <span class="totalPages">
