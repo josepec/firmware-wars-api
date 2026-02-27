@@ -13,6 +13,7 @@
  */
 
 import puppeteer from 'puppeteer';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
@@ -137,8 +138,34 @@ try {
     margin: { top: '1.5cm', right: '1.5cm', bottom: '1.2cm', left: '1.5cm' },
   });
 
-  writeFileSync(tmpFile, pdf);
-  console.log(`✔ PDF generado  (${(pdf.byteLength / 1024).toFixed(1)} KB)`);
+  console.log(`✔ PDF generado por Puppeteer  (${(pdf.byteLength / 1024).toFixed(1)} KB)`);
+
+  /* 1b — Post-procesar con pdf-lib: números de página alternados */
+  const pdfDoc = await PDFDocument.load(pdf);
+  const font   = await pdfDoc.embedFont(StandardFonts.Courier);
+  const green  = rgb(74 / 255, 122 / 255, 82 / 255); // #4a7a52
+  const fontSize = 7;
+
+  // A5 con márgenes: izquierda/derecha 1.5cm, inferior 1.2cm  → en puntos (1cm = 28.35pt)
+  const sideMarginPt   = 1.5 * 28.35; // ≈ 42.5pt
+  const bottomMarginPt = 1.2 * 28.35; // ≈ 34pt
+
+  pdfDoc.getPages().forEach((p, i) => {
+    if (i === 0) return;                          // portada sin número
+    const pageNum  = i + 1;
+    const { width } = p.getSize();
+    const text     = String(pageNum);
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    const y = bottomMarginPt * 0.4;              // ~13.7pt: centrado en margen inferior
+    const x = pageNum % 2 === 1
+      ? width - sideMarginPt - textWidth          // impar → derecha (recto)
+      : sideMarginPt;                             // par   → izquierda (verso)
+    p.drawText(text, { x, y, size: fontSize, font, color: green });
+  });
+
+  const finalPdf = await pdfDoc.save();
+  writeFileSync(tmpFile, finalPdf);
+  console.log(`✔ Números de página añadidos  (${(finalPdf.byteLength / 1024).toFixed(1)} KB)`);
 } finally {
   await browser.close();
 }
