@@ -14,14 +14,56 @@
 
 import puppeteer from 'puppeteer';
 import { spawnSync } from 'child_process';
-import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { tmpdir, homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ACCOUNT_ID   = '6ae2e655cdb9fce3177feb49d02fdfa1';
 const KV_NAMESPACE_ID = '459ee8f8ddb846cfb0d86221fcab04d0';
 const R2_BUCKET = 'firmware-wars-assets';
+
+/* ── Cloudflare API token (desde env o desde el config de wrangler) ── */
+
+function getCfToken() {
+  if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
+
+  // Wrangler guarda el OAuth token en el config de usuario
+  const candidates = [
+    join(process.env.APPDATA ?? '', 'xdg.config', '.wrangler', 'config', 'default.toml'),
+    join(homedir(), '.config', '.wrangler', 'config', 'default.toml'),
+    join(homedir(), '.wrangler', 'config', 'default.toml'),
+  ];
+  for (const p of candidates) {
+    try {
+      const toml = readFileSync(p, 'utf-8');
+      const m = toml.match(/oauth_token\s*=\s*"([^"]+)"/);
+      if (m) return m[1];
+    } catch { /* fichero no existe */ }
+  }
+  throw new Error(
+    'No se encontró token de Cloudflare. ' +
+    'Define la variable CLOUDFLARE_API_TOKEN o ejecuta `npx wrangler login`.',
+  );
+}
+
+/* ── Escribe un valor en KV via REST API (evita problemas de shell) ── */
+
+async function kvPut(key, value) {
+  const token = getCfToken();
+  const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}` +
+              `/storage/kv/namespaces/${KV_NAMESPACE_ID}/values/${key}`;
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`KV write falló: ${resp.status} ${text}`);
+  }
+}
 
 /* ── Versión ──────────────────────────────────────────────── */
 
@@ -133,29 +175,9 @@ if (r2Result.status !== 0) {
   process.exit(1);
 }
 
-/* 3 — Actualizar versión en KV (via fichero para evitar problemas con
-        las comillas en cmd.exe de Windows al pasar JSON inline)        */
+/* 3 — Actualizar versión en KV via REST API */
 console.log(`🔑 Actualizando versión en KV...`);
-const kvTmpFile = join(tmpdir(), `fw-version-${Date.now()}.json`);
-writeFileSync(kvTmpFile, JSON.stringify(next));
-const kvResult = spawnSync(
-  'npx',
-  [
-    'wrangler', 'kv', 'key', 'put',
-    '--namespace-id', KV_NAMESPACE_ID,
-    'version',
-    '--path', kvTmpFile,
-    '--remote',
-  ],
-  { cwd: ROOT, encoding: 'utf-8', shell: true },
-);
-unlinkSync(kvTmpFile);
-process.stdout.write(kvResult.stdout ?? '');
-process.stderr.write(kvResult.stderr ?? '');
-if (kvResult.status !== 0) {
-  console.error(`❌ Error actualizando KV (exit code: ${kvResult.status})`);
-  process.exit(1);
-}
+await kvPut('version', next);
 
 /* 4 — Limpiar */
 unlinkSync(tmpFile);
