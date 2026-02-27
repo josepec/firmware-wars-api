@@ -131,21 +131,15 @@ try {
         font-family:monospace;font-size:7pt;color:#3a6640;
         border-bottom:0.75pt solid #b8deba;">
         <span>FIRMWARE WARS</span>
-        <span style="color:#6ea878;">◆</span>
-        <span>System Manual v${version}</span>
+        <span>Core Combat System v${version}</span>
       </div>`,
     footerTemplate: `
       <div style="
         width:100%;box-sizing:border-box;padding:0 1.5cm;height:0.85cm;
-        display:flex;align-items:center;justify-content:space-between;
+        display:flex;align-items:center;justify-content:flex-end;
         font-family:monospace;font-size:6pt;color:#4a7a52;
         border-top:0.75pt solid #b8deba;">
-        <span>28ª FIRMWARE WARS — Core Combat System</span>
-        <span>
-          <span class="pageNumber"></span>
-          <span style="color:#b8deba;"> / </span>
-          <span class="totalPages"></span>
-        </span>
+        <span class="pageNumber"></span>
       </div>`,
     margin: { top: '1.5cm', right: '1.5cm', bottom: '1.2cm', left: '1.5cm' },
   });
