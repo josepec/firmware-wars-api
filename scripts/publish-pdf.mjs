@@ -14,7 +14,7 @@
 
 import puppeteer from 'puppeteer';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import pdfParse from 'pdf-parse';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
@@ -140,32 +140,26 @@ const MARKER_RE = /FWMARK-(\w+?)(?:-([A-Z0-9_.]+))?(?=\s|$)/g;
  * No depende de ninguna lista hardcodeada de secciones.
  */
 async function extractSectionMap(pdfBuffer) {
-  const pageTexts = [];
-
-  await pdfParse(pdfBuffer, {
-    pagerender(pageData) {
-      return pageData.getTextContent().then(tc => {
-        const text = tc.items.map(item => item.str).join(' ');
-        pageTexts.push(text);
-        return text;
-      });
-    },
-  });
-
+  const doc = await getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
   const map = [];
-  for (let i = 0; i < pageTexts.length; i++) {
-    const pageNum = i + 1;
-    for (const match of pageTexts[i].matchAll(MARKER_RE)) {
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const pg = await doc.getPage(i);
+    const tc = await pg.getTextContent();
+    const text = tc.items.map(item => item.str).join(' ');
+
+    for (const match of text.matchAll(MARKER_RE)) {
       const id = match[1];    // 'TOC', '01', '02', ...
       const label = match[2]; // undefined para TOC, 'INIT.SYS' para secciones
       map.push({
         id,
         label: label ?? (id === 'TOC' ? 'ÍNDICE DE CONTENIDOS' : id),
-        startPage: pageNum,
+        startPage: i,
       });
     }
   }
 
+  await doc.destroy();
   map.sort((a, b) => a.startPage - b.startPage);
   return map;
 }
