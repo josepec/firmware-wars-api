@@ -14,6 +14,7 @@
 
 import puppeteer from 'puppeteer';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import pdfParse from 'pdf-parse';
 import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
@@ -126,65 +127,107 @@ const tmpFile = join(tmpdir(), `firmware-wars-manual-v${version}.pdf`);
 console.log(`\n📄 Generando PDF v${version}  (${ver(current)} → ${version})`);
 console.log(`   Fuente: ${printUrl}\n`);
 
-/* 1 — Generar PDF con Puppeteer local */
+/**
+ * Regex para marcadores. Formatos:
+ *   FWMARK-TOC                → id='TOC', label='ÍNDICE DE CONTENIDOS'
+ *   FWMARK-01-INIT.SYS        → id='01',  label='INIT.SYS'
+ */
+const MARKER_RE = /FWMARK-(\w+?)(?:-([A-Z0-9_.]+))?(?=\s|$)/g;
+
+/**
+ * Extrae los marcadores FWMARK de cada página del PDF.
+ * Devuelve un array ordenado: [{ id, label, startPage }]
+ * No depende de ninguna lista hardcodeada de secciones.
+ */
+async function extractSectionMap(pdfBuffer) {
+  const pageTexts = [];
+
+  await pdfParse(pdfBuffer, {
+    pagerender(pageData) {
+      return pageData.getTextContent().then(tc => {
+        const text = tc.items.map(item => item.str).join(' ');
+        pageTexts.push(text);
+        return text;
+      });
+    },
+  });
+
+  const map = [];
+  for (let i = 0; i < pageTexts.length; i++) {
+    const pageNum = i + 1;
+    for (const match of pageTexts[i].matchAll(MARKER_RE)) {
+      const id = match[1];    // 'TOC', '01', '02', ...
+      const label = match[2]; // undefined para TOC, 'INIT.SYS' para secciones
+      map.push({
+        id,
+        label: label ?? (id === 'TOC' ? 'ÍNDICE DE CONTENIDOS' : id),
+        startPage: pageNum,
+      });
+    }
+  }
+
+  map.sort((a, b) => a.startPage - b.startPage);
+  return map;
+}
+
+/**
+ * Devuelve la etiqueta de sección para una página dada,
+ * basándose en el mapa real extraído del PDF.
+ */
+function getLabelForPage(sectionMap, pageNum) {
+  for (let i = sectionMap.length - 1; i >= 0; i--) {
+    if (pageNum >= sectionMap[i].startPage) return sectionMap[i].label;
+  }
+  return null; // portada: sin header
+}
+
+/* 1 — Generar PDF con doble pasada */
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
 
 try {
-  await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
-  await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
-
-  /* 1a — Extraer secciones y contar páginas PDF reales por columna overflow */
-  const domPages = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('.fw-page')).map(fw => {
-      const sectionIdEl = fw.querySelector('.section-id');
-      const tocLabelEl  = fw.querySelector('.toc-label');
-      const label     = sectionIdEl?.textContent.trim()
-                     ?? (tocLabelEl ? tocLabelEl.textContent.trim() : null);
-      // El ID del elemento (ej: "fw-section-intro") permite mapear al TOC
-      const sectionId = fw.id?.startsWith('fw-section-') ? fw.id.slice('fw-section-'.length) : null;
-
-      // El overflow de columnas es HORIZONTAL: scrollWidth / clientWidth = nº de páginas
-      const col = fw.querySelector('.md-col-2, .md-col-3');
-      const pageCount = (col && col.clientWidth > 0)
-        ? Math.max(1, Math.ceil(col.scrollWidth / col.clientWidth))
-        : 1;
-
-      return { label, sectionId, pageCount };
-    });
-  });
-
-  // Calcular la página de inicio de cada sección (1-indexed)
-  let currentPdfPage = 0;
-  const sectionPageMap = {}; // { sectionId: startPage }
-  const pdfPageLabels  = []; // pdfPageLabels[i] = label de la pág i del PDF
-  for (const dp of domPages) {
-    if (dp.sectionId) sectionPageMap[dp.sectionId] = currentPdfPage + 1;
-    for (let i = 0; i < dp.pageCount; i++) pdfPageLabels.push(dp.label);
-    currentPdfPage += dp.pageCount;
-  }
-
-  // Inyectar números de página en los spans .toc-pn del TOC
-  await page.evaluate(map => {
-    document.querySelectorAll('.toc-pn[data-section-id]').forEach(el => {
-      const pg = map[el.dataset.sectionId];
-      if (pg != null) el.textContent = String(pg);
-    });
-  }, sectionPageMap);
-
-  /* 1b — Generar PDF (sin header/footer de Puppeteer — los pone pdf-lib) */
   const { page: pgCfg, header: hCfg, pageNumber: pnCfg } = cfg;
-  const pdf = await page.pdf({
+  const pdfOpts = {
     format: pgCfg.format,
     printBackground: true,
     displayHeaderFooter: false,
     margin: pgCfg.margin,
-  });
+  };
 
-  console.log(`✔ PDF generado por Puppeteer  (${(pdf.byteLength / 1024).toFixed(1)} KB)`);
+  await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
+  await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
 
-  /* 1c — Post-procesar con pdf-lib: header alternado + número de página */
-  const pdfDoc      = await PDFDocument.load(pdf);
+  /* ── PASADA 1: generar PDF y extraer mapa de secciones ── */
+  const pass1Pdf = await page.pdf(pdfOpts);
+  console.log(`✔ Pasada 1 completada  (${(pass1Pdf.byteLength / 1024).toFixed(1)} KB)`);
+
+  const sectionMap = await extractSectionMap(Buffer.from(pass1Pdf));
+  const pass1Pages = (await PDFDocument.load(pass1Pdf)).getPageCount();
+
+  console.log(`  Mapa de secciones:`);
+  for (const s of sectionMap) {
+    console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
+  }
+
+  /* ── PASADA 2: inyectar números de página en TOC y regenerar ── */
+  await page.evaluate((sections) => {
+    for (const { num, startPage } of sections) {
+      const el = document.getElementById(`toc-pn-${num}`);
+      if (el) el.textContent = String(startPage);
+    }
+  }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })));
+
+  const pass2Pdf = await page.pdf(pdfOpts);
+  const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
+
+  if (pass1Pages !== pass2Pages) {
+    console.warn(`⚠️  Pasada 1 tiene ${pass1Pages} páginas, pasada 2 tiene ${pass2Pages}. Verificar TOC.`);
+  }
+
+  console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
+
+  /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
+  const pdfDoc      = await PDFDocument.load(pass2Pdf);
   const font        = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor   = hexToRgb(hCfg.textColor);
   const borderColor = hexToRgb(hCfg.borderColor);
@@ -197,16 +240,12 @@ try {
   const sideMarginPt   = cmToPt(pgCfg.margin.left);
   const yPnPt          = cmToPt(pnCfg.yFromBottom);
 
-  let lastLabel = null;
   pdfDoc.getPages().forEach((p, i) => {
-    // Etiqueta: del mapeo estimado; si no hay, propagar la última conocida
-    const mapped = pdfPageLabels[i];
-    const label  = mapped !== undefined ? mapped : lastLabel;
-    if (mapped != null) lastLabel = mapped;
+    const pageNum = i + 1;
+    const label = getLabelForPage(sectionMap, pageNum);
     if (!label) return;                             // portada: sin header ni footer
 
     const { width: W, height: H } = p.getSize();
-    const pageNum     = i + 1;
     const isRecto     = pageNum % 2 === 1;          // impar = recto (derecha)
     const headerLineY = H - topMarginPt;
     const hTextY      = headerLineY + (topMarginPt - hFontSize) / 2;
@@ -219,12 +258,10 @@ try {
     const pnW         = font.widthOfTextAtSize(pnText, pnFontSize);
 
     if (isRecto) {
-      // Recto (impar): sección a la derecha (exterior), versión a la izquierda (interior)
       p.drawText(sectionText, { x: W - sideMarginPt - sectionW, y: hTextY, size: hFontSize, font, color: textColor });
       p.drawText(versionText, { x: sideMarginPt,                y: hTextY, size: hFontSize, font, color: textColor });
       p.drawText(pnText,      { x: W - sideMarginPt - pnW,      y: yPnPt,  size: pnFontSize, font, color: pnColor });
     } else {
-      // Verso (par): sección a la izquierda (exterior), versión a la derecha (interior)
       p.drawText(sectionText, { x: sideMarginPt,                    y: hTextY, size: hFontSize, font, color: textColor });
       p.drawText(versionText, { x: W - sideMarginPt - versionW,     y: hTextY, size: hFontSize, font, color: textColor });
       p.drawText(pnText,      { x: sideMarginPt,                    y: yPnPt,  size: pnFontSize, font, color: pnColor });
