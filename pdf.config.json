@@ -1,0 +1,28 @@
+{
+  "_info": "Configuración del PDF generado. Distancias en cm, tamaños de fuente en pt.",
+
+  "page": {
+    "format": "A5",
+    "margin": {
+      "top":    "1.5cm",
+      "right":  "1.5cm",
+      "bottom": "1.2cm",
+      "left":   "1.5cm"
+    }
+  },
+
+  "header": {
+    "height":        "0.85cm",
+    "fontSize":      7,
+    "textColor":     "#3a6640",
+    "borderColor":   "#b8deba",
+    "sectionPrefix": "// "
+  },
+
+  "pageNumber": {
+    "fontSize":    7,
+    "color":       "#4a7a52",
+    "yFromBottom": "0.5cm",
+    "skipCover":   true
+  }
+}

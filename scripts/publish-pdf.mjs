@@ -21,6 +21,19 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/* ── Config ───────────────────────────────────────────────── */
+
+const cfg = JSON.parse(readFileSync(join(ROOT, 'pdf.config.json'), 'utf-8'));
+
+/** Convierte "1.5cm" → puntos PDF (1cm = 28.35pt) */
+function cmToPt(val) { return parseFloat(val) * 28.35; }
+
+/** Convierte "#rrggbb" → rgb() de pdf-lib (valores 0-1) */
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return rgb(((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255);
+}
 const ACCOUNT_ID   = '6ae2e655cdb9fce3177feb49d02fdfa1';
 const KV_NAMESPACE_ID = '459ee8f8ddb846cfb0d86221fcab04d0';
 const R2_BUCKET = 'firmware-wars-assets';
@@ -121,51 +134,110 @@ try {
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
 
+  /* 1a — Extraer secciones y contar páginas PDF reales por columna overflow */
+  const domPages = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('.fw-page')).map(fw => {
+      const sectionIdEl = fw.querySelector('.section-id');
+      const tocLabelEl  = fw.querySelector('.toc-label');
+      const label     = sectionIdEl?.textContent.trim()
+                     ?? (tocLabelEl ? tocLabelEl.textContent.trim() : null);
+      // El ID del elemento (ej: "fw-section-intro") permite mapear al TOC
+      const sectionId = fw.id?.startsWith('fw-section-') ? fw.id.slice('fw-section-'.length) : null;
+
+      // El overflow de columnas es HORIZONTAL: scrollWidth / clientWidth = nº de páginas
+      const col = fw.querySelector('.md-col-2, .md-col-3');
+      const pageCount = (col && col.clientWidth > 0)
+        ? Math.max(1, Math.ceil(col.scrollWidth / col.clientWidth))
+        : 1;
+
+      return { label, sectionId, pageCount };
+    });
+  });
+
+  // Calcular la página de inicio de cada sección (1-indexed)
+  let currentPdfPage = 0;
+  const sectionPageMap = {}; // { sectionId: startPage }
+  const pdfPageLabels  = []; // pdfPageLabels[i] = label de la pág i del PDF
+  for (const dp of domPages) {
+    if (dp.sectionId) sectionPageMap[dp.sectionId] = currentPdfPage + 1;
+    for (let i = 0; i < dp.pageCount; i++) pdfPageLabels.push(dp.label);
+    currentPdfPage += dp.pageCount;
+  }
+
+  // Inyectar números de página en los spans .toc-pn del TOC
+  await page.evaluate(map => {
+    document.querySelectorAll('.toc-pn[data-section-id]').forEach(el => {
+      const pg = map[el.dataset.sectionId];
+      if (pg != null) el.textContent = String(pg);
+    });
+  }, sectionPageMap);
+
+  /* 1b — Generar PDF (sin header/footer de Puppeteer — los pone pdf-lib) */
+  const { page: pgCfg, header: hCfg, pageNumber: pnCfg } = cfg;
   const pdf = await page.pdf({
-    format: 'A5',
+    format: pgCfg.format,
     printBackground: true,
-    displayHeaderFooter: true,
-    headerTemplate: `
-      <div style="
-        width:100%;box-sizing:border-box;padding:0 1.5cm;height:0.85cm;
-        display:flex;align-items:center;justify-content:space-between;
-        font-family:monospace;font-size:7pt;color:#3a6640;
-        border-bottom:0.75pt solid #b8deba;">
-        <span>FIRMWARE WARS</span>
-        <span>Core Combat System v${version}</span>
-      </div>`,
-    footerTemplate: '<div></div>',
-    margin: { top: '1.5cm', right: '1.5cm', bottom: '1.2cm', left: '1.5cm' },
+    displayHeaderFooter: false,
+    margin: pgCfg.margin,
   });
 
   console.log(`✔ PDF generado por Puppeteer  (${(pdf.byteLength / 1024).toFixed(1)} KB)`);
 
-  /* 1b — Post-procesar con pdf-lib: números de página alternados */
-  const pdfDoc = await PDFDocument.load(pdf);
-  const font   = await pdfDoc.embedFont(StandardFonts.Courier);
-  const green  = rgb(74 / 255, 122 / 255, 82 / 255); // #4a7a52
-  const fontSize = 7;
+  /* 1c — Post-procesar con pdf-lib: header alternado + número de página */
+  const pdfDoc      = await PDFDocument.load(pdf);
+  const font        = await pdfDoc.embedFont(StandardFonts.Courier);
+  const textColor   = hexToRgb(hCfg.textColor);
+  const borderColor = hexToRgb(hCfg.borderColor);
+  const pnColor     = hexToRgb(pnCfg.color);
+  const hFontSize   = hCfg.fontSize;
+  const pnFontSize  = pnCfg.fontSize;
 
-  // A5 con márgenes: izquierda/derecha 1.5cm, inferior 1.2cm  → en puntos (1cm = 28.35pt)
-  const sideMarginPt   = 1.5 * 28.35; // ≈ 42.5pt
-  const bottomMarginPt = 1.2 * 28.35; // ≈ 34pt
+  const topMarginPt    = cmToPt(pgCfg.margin.top);
+  const bottomMarginPt = cmToPt(pgCfg.margin.bottom);
+  const sideMarginPt   = cmToPt(pgCfg.margin.left);
+  const yPnPt          = cmToPt(pnCfg.yFromBottom);
 
+  let lastLabel = null;
   pdfDoc.getPages().forEach((p, i) => {
-    if (i === 0) return;                          // portada sin número
-    const pageNum  = i + 1;
-    const { width } = p.getSize();
-    const text     = String(pageNum);
-    const textWidth = font.widthOfTextAtSize(text, fontSize);
-    const y = bottomMarginPt * 0.4;              // ~13.7pt: centrado en margen inferior
-    const x = pageNum % 2 === 1
-      ? width - sideMarginPt - textWidth          // impar → derecha (recto)
-      : sideMarginPt;                             // par   → izquierda (verso)
-    p.drawText(text, { x, y, size: fontSize, font, color: green });
+    // Etiqueta: del mapeo estimado; si no hay, propagar la última conocida
+    const mapped = pdfPageLabels[i];
+    const label  = mapped !== undefined ? mapped : lastLabel;
+    if (mapped != null) lastLabel = mapped;
+    if (!label) return;                             // portada: sin header ni footer
+
+    const { width: W, height: H } = p.getSize();
+    const pageNum     = i + 1;
+    const isRecto     = pageNum % 2 === 1;          // impar = recto (derecha)
+    const headerLineY = H - topMarginPt;
+    const hTextY      = headerLineY + (topMarginPt - hFontSize) / 2;
+
+    const sectionText = hCfg.sectionPrefix + label;
+    const versionText = `v${version}`;
+    const sectionW    = font.widthOfTextAtSize(sectionText, hFontSize);
+    const versionW    = font.widthOfTextAtSize(versionText, hFontSize);
+    const pnText      = String(pageNum);
+    const pnW         = font.widthOfTextAtSize(pnText, pnFontSize);
+
+    if (isRecto) {
+      // Recto (impar): sección a la derecha (exterior), versión a la izquierda (interior)
+      p.drawText(sectionText, { x: W - sideMarginPt - sectionW, y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(versionText, { x: sideMarginPt,                y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(pnText,      { x: W - sideMarginPt - pnW,      y: yPnPt,  size: pnFontSize, font, color: pnColor });
+    } else {
+      // Verso (par): sección a la izquierda (exterior), versión a la derecha (interior)
+      p.drawText(sectionText, { x: sideMarginPt,                    y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(versionText, { x: W - sideMarginPt - versionW,     y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(pnText,      { x: sideMarginPt,                    y: yPnPt,  size: pnFontSize, font, color: pnColor });
+    }
+
+    // Líneas separadoras de ancho completo
+    p.drawLine({ start: { x: 0, y: headerLineY },    end: { x: W, y: headerLineY },    thickness: 0.75, color: borderColor });
+    p.drawLine({ start: { x: 0, y: bottomMarginPt }, end: { x: W, y: bottomMarginPt }, thickness: 0.75, color: borderColor });
   });
 
   const finalPdf = await pdfDoc.save();
   writeFileSync(tmpFile, finalPdf);
-  console.log(`✔ Números de página añadidos  (${(finalPdf.byteLength / 1024).toFixed(1)} KB)`);
+  console.log(`✔ Header/footer añadidos  (${(finalPdf.byteLength / 1024).toFixed(1)} KB)`);
 } finally {
   await browser.close();
 }
