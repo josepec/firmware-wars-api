@@ -35,7 +35,7 @@ function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return rgb(((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255);
 }
-const ACCOUNT_ID   = '6ae2e655cdb9fce3177feb49d02fdfa1';
+const ACCOUNT_ID = '6ae2e655cdb9fce3177feb49d02fdfa1';
 const KV_NAMESPACE_ID = '459ee8f8ddb846cfb0d86221fcab04d0';
 const R2_BUCKET = 'firmware-wars-assets';
 
@@ -68,7 +68,7 @@ function getCfToken() {
 async function kvPut(key, value) {
   const token = getCfToken();
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}` +
-              `/storage/kv/namespaces/${KV_NAMESPACE_ID}/values/${key}`;
+    `/storage/kv/namespaces/${KV_NAMESPACE_ID}/values/${key}`;
   const resp = await fetch(url, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -221,18 +221,18 @@ try {
   console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
-  const pdfDoc      = await PDFDocument.load(pass2Pdf);
-  const font        = await pdfDoc.embedFont(StandardFonts.Courier);
-  const textColor   = hexToRgb(hCfg.textColor);
+  const pdfDoc = await PDFDocument.load(pass2Pdf);
+  const font = await pdfDoc.embedFont(StandardFonts.Courier);
+  const textColor = hexToRgb(hCfg.textColor);
   const borderColor = hexToRgb(hCfg.borderColor);
-  const pnColor     = hexToRgb(pnCfg.color);
-  const hFontSize   = hCfg.fontSize;
-  const pnFontSize  = pnCfg.fontSize;
+  const pnColor = hexToRgb(pnCfg.color);
+  const hFontSize = hCfg.fontSize;
+  const pnFontSize = pnCfg.fontSize;
 
-  const topMarginPt    = cmToPt(pgCfg.margin.top);
+  const topMarginPt = cmToPt(pgCfg.margin.top);
   const bottomMarginPt = cmToPt(pgCfg.margin.bottom);
-  const sideMarginPt   = cmToPt(pgCfg.margin.left);
-  const yPnPt          = cmToPt(pnCfg.yFromBottom);
+  const sideMarginPt = cmToPt(pgCfg.margin.left);
+  const yPnPt = cmToPt(pnCfg.yFromBottom);
 
   pdfDoc.getPages().forEach((p, i) => {
     const pageNum = i + 1;
@@ -240,29 +240,29 @@ try {
     if (!label) return;                             // portada: sin header ni footer
 
     const { width: W, height: H } = p.getSize();
-    const isRecto     = pageNum % 2 === 1;          // impar = recto (derecha)
+    const isRecto = pageNum % 2 === 1;          // impar = recto (derecha)
     const headerLineY = H - topMarginPt;
-    const hTextY      = headerLineY + (topMarginPt - hFontSize) / 2;
+    const hTextY = headerLineY + (topMarginPt - hFontSize) / 2;
 
     const sectionText = hCfg.sectionPrefix + label;
-    const versionText = `v${version}`;
-    const sectionW    = font.widthOfTextAtSize(sectionText, hFontSize);
-    const versionW    = font.widthOfTextAtSize(versionText, hFontSize);
-    const pnText      = String(pageNum);
-    const pnW         = font.widthOfTextAtSize(pnText, pnFontSize);
+    const versionText = `CORE COMBAT SYSTEM v${version}`;
+    const sectionW = font.widthOfTextAtSize(sectionText, hFontSize);
+    const versionW = font.widthOfTextAtSize(versionText, hFontSize);
+    const pnText = String(pageNum);
+    const pnW = font.widthOfTextAtSize(pnText, pnFontSize);
 
     if (isRecto) {
       p.drawText(sectionText, { x: W - sideMarginPt - sectionW, y: hTextY, size: hFontSize, font, color: textColor });
-      p.drawText(versionText, { x: sideMarginPt,                y: hTextY, size: hFontSize, font, color: textColor });
-      p.drawText(pnText,      { x: W - sideMarginPt - pnW,      y: yPnPt,  size: pnFontSize, font, color: pnColor });
+      p.drawText(versionText, { x: sideMarginPt, y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(pnText, { x: W - sideMarginPt - pnW, y: yPnPt, size: pnFontSize, font, color: pnColor });
     } else {
-      p.drawText(sectionText, { x: sideMarginPt,                    y: hTextY, size: hFontSize, font, color: textColor });
-      p.drawText(versionText, { x: W - sideMarginPt - versionW,     y: hTextY, size: hFontSize, font, color: textColor });
-      p.drawText(pnText,      { x: sideMarginPt,                    y: yPnPt,  size: pnFontSize, font, color: pnColor });
+      p.drawText(sectionText, { x: sideMarginPt, y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(versionText, { x: W - sideMarginPt - versionW, y: hTextY, size: hFontSize, font, color: textColor });
+      p.drawText(pnText, { x: sideMarginPt, y: yPnPt, size: pnFontSize, font, color: pnColor });
     }
 
     // Líneas separadoras de ancho completo
-    p.drawLine({ start: { x: 0, y: headerLineY },    end: { x: W, y: headerLineY },    thickness: 0.75, color: borderColor });
+    p.drawLine({ start: { x: 0, y: headerLineY }, end: { x: W, y: headerLineY }, thickness: 0.75, color: borderColor });
     p.drawLine({ start: { x: 0, y: bottomMarginPt }, end: { x: W, y: bottomMarginPt }, thickness: 0.75, color: borderColor });
   });
 
