@@ -262,8 +262,8 @@ try {
     }
 
     // Líneas separadoras de ancho completo
-    p.drawLine({ start: { x: 0, y: headerLineY }, end: { x: W, y: headerLineY }, thickness: 0.75, color: borderColor });
-    p.drawLine({ start: { x: 0, y: bottomMarginPt }, end: { x: W, y: bottomMarginPt }, thickness: 0.75, color: borderColor });
+    // p.drawLine({ start: { x: 0, y: headerLineY }, end: { x: W, y: headerLineY }, thickness: 0.75, color: borderColor });
+    // p.drawLine({ start: { x: 0, y: bottomMarginPt }, end: { x: W, y: bottomMarginPt }, thickness: 0.75, color: borderColor });
   });
 
   const finalPdf = await pdfDoc.save();
