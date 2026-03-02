@@ -25,7 +25,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /* ── Config ───────────────────────────────────────────────── */
 
-const cfg = JSON.parse(readFileSync(join(ROOT, 'pdf.config.json'), 'utf-8'));
+const cfgPath = join(ROOT, '..', 'firmware-wars', 'public', 'assets', 'config', 'docs.config.json');
+const cfgFull = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+const cfg = cfgFull.pdf;
 
 /** Convierte "1.5cm" → puntos PDF (1cm = 28.35pt) */
 function cmToPt(val) { return parseFloat(val) * 28.35; }
