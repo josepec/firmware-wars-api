@@ -188,7 +188,8 @@ async function detectBlankPages(pdfBuffer) {
   for (let i = 1; i <= doc.numPages; i++) {
     const pg = await doc.getPage(i);
     const tc = await pg.getTextContent();
-    const text = tc.items.map(item => item.str).join('').trim();
+    // Eliminar TODO whitespace para detectar páginas con solo espacios
+    const text = tc.items.map(item => item.str).join('').replace(/\s/g, '');
     if (!text) blankPages.push(i);
   }
 
@@ -236,15 +237,20 @@ try {
   const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
   const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
 
-  if (spuriousBlanks.length) {
-    console.log(`  Páginas en blanco espurias: ${spuriousBlanks.join(', ')} → se eliminarán`);
-  }
+  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
+  console.log(`  Primera página de contenido: ${firstContentPage}`);
+  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
 
   /* Mapa ajustado: números de página tras eliminar las espurias */
   const adjustedMap = sectionMap.map(s => ({
     ...s,
     startPage: adjustedPageNum(s.startPage, spuriousBlanks),
   }));
+
+  console.log(`  Mapa ajustado:`);
+  for (const s of adjustedMap) {
+    console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
+  }
 
   /* ── PASADA 2: inyectar números de página en TOC y regenerar ── */
   await page.evaluate((sections) => {
@@ -271,7 +277,7 @@ try {
     for (const pageNum of [...spuriousBlanks].reverse()) {
       pdfDoc.removePage(pageNum - 1);
     }
-    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)`);
+    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
   }
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
