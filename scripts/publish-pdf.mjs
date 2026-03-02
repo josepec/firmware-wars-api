@@ -177,6 +177,32 @@ function getLabelForPage(sectionMap, pageNum) {
   return null; // portada: sin header
 }
 
+/**
+ * Detecta páginas en blanco (sin contenido de texto visible).
+ * Devuelve un array con los números de página (1-indexed).
+ */
+async function detectBlankPages(pdfBuffer) {
+  const doc = await getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+  const blankPages = [];
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const pg = await doc.getPage(i);
+    const tc = await pg.getTextContent();
+    const text = tc.items.map(item => item.str).join('').trim();
+    if (!text) blankPages.push(i);
+  }
+
+  await doc.destroy();
+  return blankPages;
+}
+
+/**
+ * Calcula el número de página ajustado tras eliminar las páginas indicadas.
+ */
+function adjustedPageNum(originalPage, removedPages) {
+  return originalPage - removedPages.filter(p => p < originalPage).length;
+}
+
 /* 1 — Generar PDF con doble pasada */
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
@@ -205,13 +231,28 @@ try {
     console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
   }
 
+  /* ── Detectar páginas en blanco espurias ────────────────── */
+  const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
+  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
+
+  if (spuriousBlanks.length) {
+    console.log(`  Páginas en blanco espurias: ${spuriousBlanks.join(', ')} → se eliminarán`);
+  }
+
+  /* Mapa ajustado: números de página tras eliminar las espurias */
+  const adjustedMap = sectionMap.map(s => ({
+    ...s,
+    startPage: adjustedPageNum(s.startPage, spuriousBlanks),
+  }));
+
   /* ── PASADA 2: inyectar números de página en TOC y regenerar ── */
   await page.evaluate((sections) => {
     for (const { num, startPage } of sections) {
       const el = document.getElementById(`toc-pn-${num}`);
       if (el) el.textContent = String(startPage);
     }
-  }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })));
+  }, adjustedMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })));
 
   const pass2Pdf = await page.pdf(pdfOpts);
   const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
@@ -224,6 +265,15 @@ try {
 
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
   const pdfDoc = await PDFDocument.load(pass2Pdf);
+
+  /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
+  if (spuriousBlanks.length) {
+    for (const pageNum of [...spuriousBlanks].reverse()) {
+      pdfDoc.removePage(pageNum - 1);
+    }
+    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)`);
+  }
+
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
   const borderColor = hexToRgb(hCfg.borderColor);
@@ -238,7 +288,7 @@ try {
 
   pdfDoc.getPages().forEach((p, i) => {
     const pageNum = i + 1;
-    const label = getLabelForPage(sectionMap, pageNum);
+    const label = getLabelForPage(adjustedMap, pageNum);
     if (!label) return;                             // portada: sin header ni footer
 
     const { width: W, height: H } = p.getSize();
