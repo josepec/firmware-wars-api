@@ -209,7 +209,7 @@ const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
 
 try {
-  const { page: pgCfg, header: hCfg, pageNumber: pnCfg } = cfg;
+  const { page: pgCfg, header: hCfg, pageNumber: pnCfg, content: ctCfg } = cfg;
   const pdfOpts = {
     format: pgCfg.format,
     printBackground: true,
@@ -219,6 +219,17 @@ try {
 
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+
+  /* ── Inyectar custom properties de contenido desde config ── */
+  if (ctCfg) {
+    await page.evaluate((ct) => {
+      const s = document.documentElement.style;
+      if (ct.paddingTop)    s.setProperty('--pdf-content-pt', ct.paddingTop);
+      if (ct.paddingRight)  s.setProperty('--pdf-content-pr', ct.paddingRight);
+      if (ct.paddingBottom) s.setProperty('--pdf-content-pb', ct.paddingBottom);
+      if (ct.paddingLeft)   s.setProperty('--pdf-content-pl', ct.paddingLeft);
+    }, ctCfg);
+  }
 
   /* ── PASADA 1: generar PDF y extraer mapa de secciones ── */
   const pass1Pdf = await page.pdf(pdfOpts);
