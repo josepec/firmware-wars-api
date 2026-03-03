@@ -300,7 +300,7 @@ try {
 
   const topMarginPt = cmToPt(pgCfg.margin.top);
   const bottomMarginPt = cmToPt(pgCfg.margin.bottom);
-  const sideMarginPt = cmToPt(hCfg.marginH ?? pgCfg.margin.left);
+  const sideMarginPt = cmToPt(pgCfg.margin.left);
   const yPnPt = cmToPt(pnCfg.yFromBottom);
 
   pdfDoc.getPages().forEach((p, i) => {
