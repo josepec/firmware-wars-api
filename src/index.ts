@@ -26,6 +26,15 @@ export default {
 
     const { pathname } = new URL(request.url);
 
+    /* ── GET /version — última versión del manual ─────────── */
+    if (pathname === '/version') {
+      const meta = await env.META.get<VersionMeta>('version', 'json');
+      const version = meta ? `v${versionString(meta)}` : null;
+      return new Response(JSON.stringify({ version }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
     /* ── GET /pdf — redirige a la URL versionada ───────────── */
     if (pathname === '/pdf') {
       const meta = await env.META.get<VersionMeta>('version', 'json');
