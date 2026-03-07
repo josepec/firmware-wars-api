@@ -13,5 +13,12 @@
       "binding": "META",
       "id": "459ee8f8ddb846cfb0d86221fcab04d0"
     }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "firmware-wars-lists",
+      "database_id": "a394f161-2293-436b-918b-9ce6cc622ce6"
+    }
   ]
 }
