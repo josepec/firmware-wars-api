@@ -197,6 +197,13 @@ async function detectBlankPages(pdfBuffer) {
   return blankPages;
 }
 
+/**
+ * Calcula el número de página ajustado tras eliminar las páginas indicadas.
+ */
+function adjustedPageNum(originalPage, removedPages) {
+  return originalPage - removedPages.filter(p => p < originalPage).length;
+}
+
 /* 1 — Generar PDF con doble pasada */
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
@@ -224,40 +231,35 @@ try {
     }, ctCfg);
   }
 
-  /* ── PASADA 1: generar PDF, detectar y eliminar blanks ── */
-  const pass1Raw = await page.pdf(pdfOpts);
-  console.log(`✔ Pasada 1 completada  (${(pass1Raw.byteLength / 1024).toFixed(1)} KB)`);
+  /* ── PASADA 1: generar PDF y extraer mapa de secciones ── */
+  const pass1Pdf = await page.pdf(pdfOpts);
+  console.log(`✔ Pasada 1 completada  (${(pass1Pdf.byteLength / 1024).toFixed(1)} KB)`);
 
-  /* Detectar páginas en blanco espurias ANTES de extraer el mapa */
-  const blankPages = await detectBlankPages(Buffer.from(pass1Raw));
-  let pass1Doc = await PDFDocument.load(pass1Raw);
-  const rawPageCount = pass1Doc.getPageCount();
-
-  /* Filtrar solo blanks en zona de contenido (no portada/reversos) */
-  const tmpMap = await extractSectionMap(Buffer.from(pass1Raw));
-  const firstContentPage = tmpMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
-  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
-
-  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
-  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
-
-  /* Eliminar blanks y re-serializar para que el PDF quede limpio */
-  if (spuriousBlanks.length) {
-    for (const pn of [...spuriousBlanks].reverse()) {
-      pass1Doc.removePage(pn - 1);
-    }
-    const cleanBytes = await pass1Doc.save();
-    pass1Doc = await PDFDocument.load(cleanBytes);   // re-serializar: refs limpias
-    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco eliminada(s)  (${rawPageCount} → ${pass1Doc.getPageCount()} págs.)`);
-  }
-
-  /* Extraer mapa de secciones del PDF ya limpio */
-  const pass1Pdf = await pass1Doc.save();
   const sectionMap = await extractSectionMap(Buffer.from(pass1Pdf));
-  const pass1Pages = pass1Doc.getPageCount();
+  const pass1Pages = (await PDFDocument.load(pass1Pdf)).getPageCount();
 
   console.log(`  Mapa de secciones:`);
   for (const s of sectionMap) {
+    console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
+  }
+
+  /* ── Detectar páginas en blanco espurias ────────────────── */
+  const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
+  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
+
+  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
+  console.log(`  Primera página de contenido: ${firstContentPage}`);
+  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
+
+  /* Mapa ajustado: números de página tras eliminar las espurias */
+  const adjustedMap = sectionMap.map(s => ({
+    ...s,
+    startPage: adjustedPageNum(s.startPage, spuriousBlanks),
+  }));
+
+  console.log(`  Mapa ajustado:`);
+  for (const s of adjustedMap) {
     console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
   }
 
@@ -269,23 +271,27 @@ try {
       const el = document.getElementById(`toc-pn-${num}`);
       if (el) el.textContent = String(startPage);
     }
-  }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
+  }, adjustedMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
 
-  const pass2Raw = await page.pdf(pdfOpts);
-  const pass2Pages = (await PDFDocument.load(pass2Raw)).getPageCount();
-  console.log(`✔ Pasada 2 completada  (${(pass2Raw.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
+  const pass2Pdf = await page.pdf(pdfOpts);
+  const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
 
-  /* ── Eliminar blanks de pasada 2 (mismas posiciones) y re-serializar ── */
-  let pdfDoc = await PDFDocument.load(pass2Raw);
-  if (spuriousBlanks.length) {
-    for (const pn of [...spuriousBlanks].reverse()) {
-      pdfDoc.removePage(pn - 1);
-    }
-    pdfDoc = await PDFDocument.load(await pdfDoc.save());  // re-serializar
-    console.log(`✔ Blanks eliminados de pasada 2  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
+  if (pass1Pages !== pass2Pages) {
+    console.warn(`⚠️  Pasada 1 tiene ${pass1Pages} páginas, pasada 2 tiene ${pass2Pages}. Verificar TOC.`);
   }
 
+  console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
+
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
+  const pdfDoc = await PDFDocument.load(pass2Pdf);
+
+  /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
+  if (spuriousBlanks.length) {
+    for (const pageNum of [...spuriousBlanks].reverse()) {
+      pdfDoc.removePage(pageNum - 1);
+    }
+    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
+  }
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
@@ -301,7 +307,7 @@ try {
 
   pdfDoc.getPages().forEach((p, i) => {
     const pageNum = i + 1;
-    const label = getLabelForPage(sectionMap, pageNum);
+    const label = getLabelForPage(adjustedMap, pageNum);
     if (!label) return;                             // portada: sin header ni footer
 
     const { width: W, height: H } = p.getSize();
