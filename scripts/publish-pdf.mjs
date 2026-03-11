@@ -263,13 +263,15 @@ try {
     console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
   }
 
-  /* ── PASADA 2: inyectar números de página en TOC y regenerar ── */
-  await page.evaluate((sections) => {
+  /* ── PASADA 2: inyectar versión en portada + números de página en TOC ── */
+  await page.evaluate((sections, ver) => {
+    const coverVer = document.getElementById('cover-version');
+    if (coverVer) coverVer.textContent = `v${ver}`;
     for (const { num, startPage } of sections) {
       const el = document.getElementById(`toc-pn-${num}`);
       if (el) el.textContent = String(startPage);
     }
-  }, adjustedMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })));
+  }, adjustedMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
 
   const pass2Pdf = await page.pdf(pdfOpts);
   const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
