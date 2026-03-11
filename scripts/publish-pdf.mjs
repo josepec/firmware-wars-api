@@ -224,26 +224,37 @@ try {
     }, ctCfg);
   }
 
-  /* ── Prevenir páginas en blanco espurias ──────────────────
-     page-break-after:always en .fw-page crea una página vacía cuando
-     el contenido llena la página exactamente. Cambiamos a
-     page-break-before:always en las secciones de contenido para evitarlo.
-     Las blank-page divs (reverso portada/índice) mantienen su break-after. */
-  await page.addStyleTag({ content: `
-    @media print {
-      .fw-page.content-page {
-        page-break-after: auto !important;
-        page-break-before: always;
-      }
+  /* ── PASADA 1: generar PDF, detectar y eliminar blanks ── */
+  const pass1Raw = await page.pdf(pdfOpts);
+  console.log(`✔ Pasada 1 completada  (${(pass1Raw.byteLength / 1024).toFixed(1)} KB)`);
+
+  /* Detectar páginas en blanco espurias ANTES de extraer el mapa */
+  const blankPages = await detectBlankPages(Buffer.from(pass1Raw));
+  let pass1Doc = await PDFDocument.load(pass1Raw);
+  const rawPageCount = pass1Doc.getPageCount();
+
+  /* Filtrar solo blanks en zona de contenido (no portada/reversos) */
+  const tmpMap = await extractSectionMap(Buffer.from(pass1Raw));
+  const firstContentPage = tmpMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
+
+  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
+  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
+
+  /* Eliminar blanks y re-serializar para que el PDF quede limpio */
+  if (spuriousBlanks.length) {
+    for (const pn of [...spuriousBlanks].reverse()) {
+      pass1Doc.removePage(pn - 1);
     }
-  `});
+    const cleanBytes = await pass1Doc.save();
+    pass1Doc = await PDFDocument.load(cleanBytes);   // re-serializar: refs limpias
+    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco eliminada(s)  (${rawPageCount} → ${pass1Doc.getPageCount()} págs.)`);
+  }
 
-  /* ── PASADA 1: generar PDF y extraer mapa de secciones ── */
-  const pass1Pdf = await page.pdf(pdfOpts);
-  console.log(`✔ Pasada 1 completada  (${(pass1Pdf.byteLength / 1024).toFixed(1)} KB)`);
-
+  /* Extraer mapa de secciones del PDF ya limpio */
+  const pass1Pdf = await pass1Doc.save();
   const sectionMap = await extractSectionMap(Buffer.from(pass1Pdf));
-  const pass1Pages = (await PDFDocument.load(pass1Pdf)).getPageCount();
+  const pass1Pages = pass1Doc.getPageCount();
 
   console.log(`  Mapa de secciones:`);
   for (const s of sectionMap) {
@@ -260,25 +271,21 @@ try {
     }
   }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
 
-  const pass2Pdf = await page.pdf(pdfOpts);
-  const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
+  const pass2Raw = await page.pdf(pdfOpts);
+  const pass2Pages = (await PDFDocument.load(pass2Raw)).getPageCount();
+  console.log(`✔ Pasada 2 completada  (${(pass2Raw.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
-  if (pass1Pages !== pass2Pages) {
-    console.warn(`⚠️  Pasada 1 tiene ${pass1Pages} páginas, pasada 2 tiene ${pass2Pages}. Verificar TOC.`);
+  /* ── Eliminar blanks de pasada 2 (mismas posiciones) y re-serializar ── */
+  let pdfDoc = await PDFDocument.load(pass2Raw);
+  if (spuriousBlanks.length) {
+    for (const pn of [...spuriousBlanks].reverse()) {
+      pdfDoc.removePage(pn - 1);
+    }
+    pdfDoc = await PDFDocument.load(await pdfDoc.save());  // re-serializar
+    console.log(`✔ Blanks eliminados de pasada 2  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
   }
-
-  console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
-  const pdfDoc = await PDFDocument.load(pass2Pdf);
-
-  /* Verificación: detectar páginas en blanco espurias residuales */
-  const blankPages = await detectBlankPages(Buffer.from(pass2Pdf));
-  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
-  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
-  if (spuriousBlanks.length) {
-    console.warn(`⚠️  Páginas en blanco espurias detectadas: [${spuriousBlanks.join(', ')}] — verificar CSS`);
-  }
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
