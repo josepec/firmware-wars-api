@@ -283,7 +283,7 @@ try {
   console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
-  let pdfDoc = await PDFDocument.load(pass2Pdf);
+  const pdfDoc = await PDFDocument.load(pass2Pdf);
 
   /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
   if (spuriousBlanks.length) {
@@ -291,9 +291,12 @@ try {
       pdfDoc.removePage(pageNum - 1);
     }
     console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
-    /* Guardar y recargar para que getPages() devuelva índices correctos */
-    pdfDoc = await PDFDocument.load(await pdfDoc.save());
   }
+
+  /* Set de páginas eliminadas para calcular número de página ajustado.
+     pdf-lib puede no reindexar getPages() tras removePage(), así que
+     calculamos el número de página real a partir del índice original. */
+  const removedSet = new Set(spuriousBlanks);
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
@@ -308,7 +311,10 @@ try {
   const yPnPt = cmToPt(pnCfg.yFromBottom);
 
   pdfDoc.getPages().forEach((p, i) => {
-    const pageNum = i + 1;
+    const originalPage = i + 1;
+    /* Si getPages() aún devuelve la página eliminada, saltarla */
+    if (removedSet.has(originalPage)) return;
+    const pageNum = adjustedPageNum(originalPage, spuriousBlanks);
     const label = getLabelForPage(adjustedMap, pageNum);
     if (!label) return;                             // portada: sin header ni footer
 
