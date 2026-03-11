@@ -197,13 +197,6 @@ async function detectBlankPages(pdfBuffer) {
   return blankPages;
 }
 
-/**
- * Calcula el número de página ajustado tras eliminar las páginas indicadas.
- */
-function adjustedPageNum(originalPage, removedPages) {
-  return originalPage - removedPages.filter(p => p < originalPage).length;
-}
-
 /* 1 — Generar PDF con doble pasada */
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
@@ -231,6 +224,20 @@ try {
     }, ctCfg);
   }
 
+  /* ── Prevenir páginas en blanco espurias ──────────────────
+     page-break-after:always en .fw-page crea una página vacía cuando
+     el contenido llena la página exactamente. Cambiamos a
+     page-break-before:always en las secciones de contenido para evitarlo.
+     Las blank-page divs (reverso portada/índice) mantienen su break-after. */
+  await page.addStyleTag({ content: `
+    @media print {
+      .fw-page.content-page {
+        page-break-after: auto !important;
+        page-break-before: always;
+      }
+    }
+  `});
+
   /* ── PASADA 1: generar PDF y extraer mapa de secciones ── */
   const pass1Pdf = await page.pdf(pdfOpts);
   console.log(`✔ Pasada 1 completada  (${(pass1Pdf.byteLength / 1024).toFixed(1)} KB)`);
@@ -243,26 +250,6 @@ try {
     console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
   }
 
-  /* ── Detectar páginas en blanco espurias ────────────────── */
-  const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
-  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
-  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
-
-  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
-  console.log(`  Primera página de contenido: ${firstContentPage}`);
-  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
-
-  /* Mapa ajustado: números de página tras eliminar las espurias */
-  const adjustedMap = sectionMap.map(s => ({
-    ...s,
-    startPage: adjustedPageNum(s.startPage, spuriousBlanks),
-  }));
-
-  console.log(`  Mapa ajustado:`);
-  for (const s of adjustedMap) {
-    console.log(`    ${s.id.padEnd(4)} ${s.label.padEnd(24)} → pág. ${s.startPage}`);
-  }
-
   /* ── PASADA 2: inyectar versión en portada + números de página en TOC ── */
   await page.evaluate((sections, ver) => {
     const coverVer = document.getElementById('cover-version');
@@ -271,7 +258,7 @@ try {
       const el = document.getElementById(`toc-pn-${num}`);
       if (el) el.textContent = String(startPage);
     }
-  }, adjustedMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
+  }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
 
   const pass2Pdf = await page.pdf(pdfOpts);
   const pass2Pages = (await PDFDocument.load(pass2Pdf)).getPageCount();
@@ -285,18 +272,13 @@ try {
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
   const pdfDoc = await PDFDocument.load(pass2Pdf);
 
-  /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
+  /* Verificación: detectar páginas en blanco espurias residuales */
+  const blankPages = await detectBlankPages(Buffer.from(pass2Pdf));
+  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
   if (spuriousBlanks.length) {
-    for (const pageNum of [...spuriousBlanks].reverse()) {
-      pdfDoc.removePage(pageNum - 1);
-    }
-    console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
+    console.warn(`⚠️  Páginas en blanco espurias detectadas: [${spuriousBlanks.join(', ')}] — verificar CSS`);
   }
-
-  /* Set de páginas eliminadas para calcular número de página ajustado.
-     pdf-lib puede no reindexar getPages() tras removePage(), así que
-     calculamos el número de página real a partir del índice original. */
-  const removedSet = new Set(spuriousBlanks);
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
@@ -311,11 +293,8 @@ try {
   const yPnPt = cmToPt(pnCfg.yFromBottom);
 
   pdfDoc.getPages().forEach((p, i) => {
-    const originalPage = i + 1;
-    /* Si getPages() aún devuelve la página eliminada, saltarla */
-    if (removedSet.has(originalPage)) return;
-    const pageNum = adjustedPageNum(originalPage, spuriousBlanks);
-    const label = getLabelForPage(adjustedMap, pageNum);
+    const pageNum = i + 1;
+    const label = getLabelForPage(sectionMap, pageNum);
     if (!label) return;                             // portada: sin header ni footer
 
     const { width: W, height: H } = p.getSize();
