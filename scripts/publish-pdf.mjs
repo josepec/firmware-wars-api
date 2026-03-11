@@ -271,21 +271,6 @@ try {
     }
   }, sectionMap.filter(s => s.id !== 'TOC').map(s => ({ num: s.id, startPage: s.startPage })), version);
 
-  /* Mover IDs de sección de los divs .fw-page a sus .section-header internos.
-     Chrome puede colocar el anchor del div en una página en blanco espuria;
-     al moverlo al header (que siempre está en la página de contenido),
-     los links del índice sobreviven a la eliminación de blanks. */
-  await page.evaluate(() => {
-    document.querySelectorAll('.fw-page.content-page[id]').forEach(div => {
-      const id = div.id;
-      const header = div.querySelector('.section-header');
-      if (header) {
-        div.removeAttribute('id');
-        header.id = id;
-      }
-    });
-  });
-
   const pass2Raw = await page.pdf(pdfOpts);
   const pass2Pages = (await PDFDocument.load(pass2Raw)).getPageCount();
   console.log(`✔ Pasada 2 completada  (${(pass2Raw.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
