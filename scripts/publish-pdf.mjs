@@ -283,7 +283,7 @@ try {
   console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
-  const pdfDoc = await PDFDocument.load(pass2Pdf);
+  let pdfDoc = await PDFDocument.load(pass2Pdf);
 
   /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
   if (spuriousBlanks.length) {
@@ -291,6 +291,8 @@ try {
       pdfDoc.removePage(pageNum - 1);
     }
     console.log(`✔ ${spuriousBlanks.length} página(s) en blanco espuria(s) eliminada(s)  (${pass2Pages} → ${pdfDoc.getPageCount()} págs.)`);
+    /* Guardar y recargar para que getPages() devuelva índices correctos */
+    pdfDoc = await PDFDocument.load(await pdfDoc.save());
   }
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
