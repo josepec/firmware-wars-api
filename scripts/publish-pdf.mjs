@@ -224,10 +224,10 @@ try {
   if (ctCfg) {
     await page.evaluate((ct) => {
       const s = document.documentElement.style;
-      if (ct.paddingTop)    s.setProperty('--pdf-content-pt', ct.paddingTop);
-      if (ct.paddingRight)  s.setProperty('--pdf-content-pr', ct.paddingRight);
+      if (ct.paddingTop) s.setProperty('--pdf-content-pt', ct.paddingTop);
+      if (ct.paddingRight) s.setProperty('--pdf-content-pr', ct.paddingRight);
       if (ct.paddingBottom) s.setProperty('--pdf-content-pb', ct.paddingBottom);
-      if (ct.paddingLeft)   s.setProperty('--pdf-content-pl', ct.paddingLeft);
+      if (ct.paddingLeft) s.setProperty('--pdf-content-pl', ct.paddingLeft);
     }, ctCfg);
   }
 
@@ -246,9 +246,26 @@ try {
   /* ── Detectar páginas en blanco espurias ────────────────── */
   const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
   const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
-  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage);
+
+  /* Páginas en blanco intencionadas: la página justo antes de la siguiente
+     sección, para cada sección con blankAfter: true en el config.          */
+  const blankAfterIds = new Set(
+    (cfgFull.sections ?? []).filter(s => s.blankAfter).map(s => s.num),
+  );
+  const intentionalBlanks = new Set();
+  for (let i = 0; i < sectionMap.length - 1; i++) {
+    if (blankAfterIds.has(sectionMap[i].id)) {
+      // La blank page está justo antes de la siguiente sección
+      const nextStart = sectionMap[i + 1].startPage;
+      const blankPage = nextStart - 1;
+      if (blankPages.includes(blankPage)) intentionalBlanks.add(blankPage);
+    }
+  }
+
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage && !intentionalBlanks.has(p));
 
   console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
+  console.log(`  Intencionadas (blankAfter):  [${[...intentionalBlanks].join(', ')}]`);
   console.log(`  Primera página de contenido: ${firstContentPage}`);
   console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
 
