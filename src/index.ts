@@ -285,6 +285,277 @@ export default {
       });
     }
 
+    /* ── GET /api/hex-types — listar tipos de hex compartidos ── */
+    if (pathname === '/api/hex-types' && request.method === 'GET') {
+      const rows = await env.DB.prepare(
+        'SELECT id, name, color, border_color, properties, created_at FROM hex_types ORDER BY created_at ASC'
+      ).all<{ id: string; name: string; color: string; border_color: string; properties: string; created_at: string }>();
+      const results = rows.results.map(r => ({
+        ...r,
+        borderColor: r.border_color,
+        properties: JSON.parse(r.properties),
+      }));
+      return new Response(JSON.stringify(results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/hex-types — crear tipo de hex (admin) ──────── */
+    if (pathname === '/api/hex-types' && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; color: string; borderColor: string; properties?: Record<string, string> };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!body.name || !body.color || !body.borderColor) {
+        return new Response(JSON.stringify({ error: 'Missing fields' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      await env.DB.prepare(
+        'INSERT INTO hex_types (id, name, color, border_color, properties) VALUES (?, ?, ?, ?, ?)'
+      ).bind(id, body.name, body.color, body.borderColor, JSON.stringify(body.properties ?? {})).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PUT /api/hex-types/:id — actualizar tipo (admin) ──────── */
+    const hexTypeMatch = pathname.match(/^\/api\/hex-types\/([a-z0-9]+)$/);
+    if (hexTypeMatch && request.method === 'PUT') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; color: string; borderColor: string; properties?: Record<string, string> };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const result = await env.DB.prepare(
+        'UPDATE hex_types SET name = ?, color = ?, border_color = ?, properties = ? WHERE id = ?'
+      ).bind(body.name, body.color, body.borderColor, JSON.stringify(body.properties ?? {}), hexTypeMatch[1]).run();
+      if (!result.meta.changes) {
+        return new Response(JSON.stringify({ error: 'Not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── DELETE /api/hex-types/:id — borrar tipo (admin) ────────── */
+    if (hexTypeMatch && request.method === 'DELETE') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      await env.DB.prepare('DELETE FROM hex_types WHERE id = ?').bind(hexTypeMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/functions — listar funciones compartidas ──────── */
+    if (pathname === '/api/functions' && request.method === 'GET') {
+      const rows = await env.DB.prepare(
+        'SELECT id, name, description, data, created_at, updated_at FROM functions ORDER BY name ASC'
+      ).all<{ id: string; name: string; description: string; data: string; created_at: string; updated_at: string }>();
+      const results = rows.results.map(r => ({ ...r, data: JSON.parse(r.data) }));
+      return new Response(JSON.stringify(results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/functions/:id — obtener función ───────────────── */
+    const funcMatch = pathname.match(/^\/api\/functions\/([a-z0-9]+)$/);
+    if (funcMatch && request.method === 'GET') {
+      const row = await env.DB.prepare(
+        'SELECT id, name, description, data, created_at, updated_at FROM functions WHERE id = ?'
+      ).bind(funcMatch[1]).first<{ id: string; name: string; description: string; data: string; created_at: string; updated_at: string }>();
+      if (!row) {
+        return new Response(JSON.stringify({ error: 'Function not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ...row, data: JSON.parse(row.data) }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/functions — crear función (admin) ───────────── */
+    if (pathname === '/api/functions' && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; description: string; data: unknown };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!body.name) {
+        return new Response(JSON.stringify({ error: 'Missing name' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        'INSERT INTO functions (id, name, description, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(id, body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, now).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PUT /api/functions/:id — actualizar función (admin) ───── */
+    if (funcMatch && request.method === 'PUT') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; description: string; data: unknown };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const now = new Date().toISOString();
+      const result = await env.DB.prepare(
+        'UPDATE functions SET name = ?, description = ?, data = ?, updated_at = ? WHERE id = ?'
+      ).bind(body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, funcMatch[1]).run();
+      if (!result.meta.changes) {
+        return new Response(JSON.stringify({ error: 'Function not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── DELETE /api/functions/:id — borrar función (admin) ───── */
+    if (funcMatch && request.method === 'DELETE') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      await env.DB.prepare('DELETE FROM functions WHERE id = ?').bind(funcMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/threats — listar amenazas ─────────────────── */
+    if (pathname === '/api/threats' && request.method === 'GET') {
+      const rows = await env.DB.prepare(
+        'SELECT id, name, description, updated_at FROM threats ORDER BY name ASC'
+      ).all<{ id: string; name: string; description: string; updated_at: string }>();
+      return new Response(JSON.stringify(rows.results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/threats/:id — obtener amenaza ────────────── */
+    const threatMatch = pathname.match(/^\/api\/threats\/([a-z0-9]+)$/);
+    if (threatMatch && request.method === 'GET') {
+      const row = await env.DB.prepare(
+        'SELECT id, name, description, data, created_at, updated_at FROM threats WHERE id = ?'
+      ).bind(threatMatch[1]).first<{ id: string; name: string; description: string; data: string; created_at: string; updated_at: string }>();
+      if (!row) {
+        return new Response(JSON.stringify({ error: 'Threat not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ...row, data: JSON.parse(row.data) }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/threats — crear amenaza (admin) ──────────── */
+    if (pathname === '/api/threats' && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; description: string; data: unknown };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!body.name) {
+        return new Response(JSON.stringify({ error: 'Missing name' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        'INSERT INTO threats (id, name, description, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(id, body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, now).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PUT /api/threats/:id — actualizar amenaza (admin) ──── */
+    if (threatMatch && request.method === 'PUT') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name: string; description: string; data: unknown };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const now = new Date().toISOString();
+      const result = await env.DB.prepare(
+        'UPDATE threats SET name = ?, description = ?, data = ?, updated_at = ? WHERE id = ?'
+      ).bind(body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, threatMatch[1]).run();
+      if (!result.meta.changes) {
+        return new Response(JSON.stringify({ error: 'Threat not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── DELETE /api/threats/:id — borrar amenaza (admin) ──── */
+    if (threatMatch && request.method === 'DELETE') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      await env.DB.prepare('DELETE FROM threats WHERE id = ?').bind(threatMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   },
 };
