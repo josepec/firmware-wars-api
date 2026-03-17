@@ -367,13 +367,32 @@ export default {
       });
     }
 
-    /* ── GET /api/functions — listar funciones compartidas ──────── */
+    /* ── GET /api/functions — JSON array listo para usar en docs ── */
     if (pathname === '/api/functions' && request.method === 'GET') {
       const rows = await env.DB.prepare(
-        'SELECT id, name, description, data, created_at, updated_at FROM functions ORDER BY name ASC'
-      ).all<{ id: string; name: string; description: string; data: string; created_at: string; updated_at: string }>();
-      const results = rows.results.map(r => ({ ...r, data: JSON.parse(r.data) }));
+        `SELECT id, func_name, version, range, damage, energy, cost, effects
+         FROM functions ORDER BY version ASC, func_name ASC`
+      ).all<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
+      const results = rows.results.map(r => ({
+        'Función': r.func_name,
+        'V.~': r.version,
+        'Rango~': r.range,
+        'Daño~': r.damage,
+        'Energía~': r.energy,
+        'Coste~': r.cost,
+        'Efectos': r.effects,
+      }));
       return new Response(JSON.stringify(results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/functions/admin — lista con ids para admin ───── */
+    if (pathname === '/api/functions/admin' && request.method === 'GET') {
+      const rows = await env.DB.prepare(
+        'SELECT id, func_name, version, range, damage, energy, cost, effects FROM functions ORDER BY version ASC, func_name ASC'
+      ).all<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
+      return new Response(JSON.stringify(rows.results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
@@ -382,14 +401,14 @@ export default {
     const funcMatch = pathname.match(/^\/api\/functions\/([a-z0-9]+)$/);
     if (funcMatch && request.method === 'GET') {
       const row = await env.DB.prepare(
-        'SELECT id, name, description, data, created_at, updated_at FROM functions WHERE id = ?'
-      ).bind(funcMatch[1]).first<{ id: string; name: string; description: string; data: string; created_at: string; updated_at: string }>();
+        'SELECT id, func_name, version, range, damage, energy, cost, effects FROM functions WHERE id = ?'
+      ).bind(funcMatch[1]).first<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
       if (!row) {
         return new Response(JSON.stringify({ error: 'Function not found' }), {
           status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({ ...row, data: JSON.parse(row.data) }), {
+      return new Response(JSON.stringify(row), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
@@ -401,22 +420,21 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { name: string; description: string; data: unknown };
+      let body: { func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      if (!body.name) {
-        return new Response(JSON.stringify({ error: 'Missing name' }), {
+      if (!body.func_name) {
+        return new Response(JSON.stringify({ error: 'Missing func_name' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
       const id = generateId();
-      const now = new Date().toISOString();
       await env.DB.prepare(
-        'INSERT INTO functions (id, name, description, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(id, body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, now).run();
+        'INSERT INTO functions (id, func_name, version, range, damage, energy, cost, effects) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, body.func_name, body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '').run();
       return new Response(JSON.stringify({ id }), {
         status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
@@ -429,16 +447,15 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { name: string; description: string; data: unknown };
+      let body: { func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      const now = new Date().toISOString();
       const result = await env.DB.prepare(
-        'UPDATE functions SET name = ?, description = ?, data = ?, updated_at = ? WHERE id = ?'
-      ).bind(body.name, body.description ?? '', JSON.stringify(body.data ?? {}), now, funcMatch[1]).run();
+        'UPDATE functions SET func_name = ?, version = ?, range = ?, damage = ?, energy = ?, cost = ?, effects = ? WHERE id = ?'
+      ).bind(body.func_name, body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '', funcMatch[1]).run();
       if (!result.meta.changes) {
         return new Response(JSON.stringify({ error: 'Function not found' }), {
           status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
