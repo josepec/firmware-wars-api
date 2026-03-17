@@ -374,12 +374,12 @@ export default {
          FROM functions ORDER BY version ASC, func_name ASC`
       ).all<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
       const results = rows.results.map(r => ({
-        'Función': r.func_name,
+        'Función': '`' + r.func_name + '`',
         'V.~': r.version,
         'Rango~': r.range,
         'Daño~': r.damage,
         'Energía~': r.energy,
-        'Coste~': r.cost,
+        'Coste~': r.cost ? r.cost + '◈' : '—',
         'Efectos': r.effects,
       }));
       return new Response(JSON.stringify(results), {
