@@ -87,7 +87,7 @@ export default {
           ...CORS_HEADERS,
           'Content-Type': 'application/pdf',
           'Content-Disposition': `attachment; filename="firmware-wars-manual-v${version}.pdf"`,
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': 'public, max-age=3600',
         },
       });
     }
@@ -547,7 +547,7 @@ export default {
         headers: {
           ...CORS_HEADERS,
           'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': 'public, max-age=3600',
         },
       });
     }
