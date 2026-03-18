@@ -479,12 +479,89 @@ export default {
       });
     }
 
+    /* ── POST /api/upload — subir archivo a R2 (admin) ───────── */
+    if (pathname === '/api/upload' && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const contentType = request.headers.get('Content-Type') ?? '';
+      let fileBytes: ArrayBuffer;
+      let mimeType: string;
+      let ext: string;
+
+      if (contentType.includes('multipart/form-data')) {
+        const formData = await request.formData();
+        const file = formData.get('file') as File | null;
+        if (!file) {
+          return new Response(JSON.stringify({ error: 'No file provided' }), {
+            status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
+        fileBytes = await file.arrayBuffer();
+        mimeType = file.type || 'application/octet-stream';
+        const nameParts = file.name.split('.');
+        ext = nameParts.length > 1 ? nameParts.pop()! : 'bin';
+      } else {
+        fileBytes = await request.arrayBuffer();
+        mimeType = contentType || 'application/octet-stream';
+        const mimeToExt: Record<string, string> = {
+          'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
+          'image/gif': 'gif', 'image/svg+xml': 'svg',
+        };
+        ext = mimeToExt[mimeType] ?? 'bin';
+      }
+
+      if (fileBytes.byteLength > 5 * 1024 * 1024) {
+        return new Response(JSON.stringify({ error: 'File too large (max 5MB)' }), {
+          status: 413, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const timestamp = Date.now();
+      const random = generateId(6);
+      const key = `threats/${timestamp}-${random}.${ext}`;
+
+      await env.ASSETS.put(key, fileBytes, {
+        httpMetadata: { contentType: mimeType },
+      });
+
+      return new Response(JSON.stringify({ key, url: `/api/files/${key}` }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/files/* — servir archivos desde R2 ──────────── */
+    const filesMatch = pathname.match(/^\/api\/files\/(.+)$/);
+    if (filesMatch && request.method === 'GET') {
+      const key = decodeURIComponent(filesMatch[1]);
+      const object = await env.ASSETS.get(key);
+      if (!object) {
+        return new Response('File not found', {
+          status: 404, headers: CORS_HEADERS,
+        });
+      }
+      return new Response(object.body, {
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    }
+
     /* ── GET /api/threats — listar amenazas ─────────────────── */
     if (pathname === '/api/threats' && request.method === 'GET') {
       const rows = await env.DB.prepare(
-        'SELECT id, name, description, updated_at FROM threats ORDER BY name ASC'
-      ).all<{ id: string; name: string; description: string; updated_at: string }>();
-      return new Response(JSON.stringify(rows.results), {
+        'SELECT id, name, description, data, updated_at FROM threats ORDER BY name ASC'
+      ).all<{ id: string; name: string; description: string; data: string; updated_at: string }>();
+      const results = rows.results.map(r => ({
+        ...r,
+        data: r.data ? JSON.parse(r.data) : {},
+      }));
+      return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
