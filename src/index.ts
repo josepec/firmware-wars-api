@@ -370,10 +370,10 @@ export default {
     /* ── GET /api/functions — JSON array listo para usar en docs ── */
     if (pathname === '/api/functions' && request.method === 'GET') {
       const rows = await env.DB.prepare(
-        `SELECT id, func_name, version, range, damage, energy, cost, effects
+        `SELECT id, func_name, func_type, version, range, damage, energy, cost, effects
          FROM functions ORDER BY version ASC, func_name ASC`
-      ).all<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
-      const results = rows.results.map(r => ({
+      ).all<{ id: string; func_name: string; func_type: string | null; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
+      const attack = rows.results.filter(r => (r.func_type ?? 'attack') === 'attack').map(r => ({
         'Función': '`' + r.func_name + '`',
         'V.~': r.version,
         'Rango~': r.range,
@@ -382,7 +382,11 @@ export default {
         'Coste~': r.cost ? r.cost + '◈' : '—',
         'Efectos': r.effects,
       }));
-      return new Response(JSON.stringify(results), {
+      const passive = rows.results.filter(r => r.func_type === 'passive').map(r => ({
+        'Función': '`' + r.func_name + '`',
+        'Efectos': r.effects,
+      }));
+      return new Response(JSON.stringify({ attack, passive }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
@@ -390,9 +394,10 @@ export default {
     /* ── GET /api/functions/admin — lista con ids para admin ───── */
     if (pathname === '/api/functions/admin' && request.method === 'GET') {
       const rows = await env.DB.prepare(
-        'SELECT id, func_name, version, range, damage, energy, cost, effects FROM functions ORDER BY version ASC, func_name ASC'
-      ).all<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
-      return new Response(JSON.stringify(rows.results), {
+        'SELECT id, func_name, func_type, version, range, damage, energy, cost, effects FROM functions ORDER BY func_type ASC, version ASC, func_name ASC'
+      ).all<{ id: string; func_name: string; func_type: string | null; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
+      const results = rows.results.map(r => ({ ...r, func_type: r.func_type ?? 'attack' }));
+      return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
@@ -401,14 +406,14 @@ export default {
     const funcMatch = pathname.match(/^\/api\/functions\/([a-z0-9]+)$/);
     if (funcMatch && request.method === 'GET') {
       const row = await env.DB.prepare(
-        'SELECT id, func_name, version, range, damage, energy, cost, effects FROM functions WHERE id = ?'
-      ).bind(funcMatch[1]).first<{ id: string; func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
+        'SELECT id, func_name, func_type, version, range, damage, energy, cost, effects FROM functions WHERE id = ?'
+      ).bind(funcMatch[1]).first<{ id: string; func_name: string; func_type: string | null; version: string; range: string; damage: string; energy: string; cost: string; effects: string }>();
       if (!row) {
         return new Response(JSON.stringify({ error: 'Function not found' }), {
           status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify(row), {
+      return new Response(JSON.stringify({ ...row, func_type: row.func_type ?? 'attack' }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
@@ -420,7 +425,7 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
+      let body: { func_name: string; func_type?: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -433,8 +438,8 @@ export default {
       }
       const id = generateId();
       await env.DB.prepare(
-        'INSERT INTO functions (id, func_name, version, range, damage, energy, cost, effects) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(id, body.func_name, body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '').run();
+        'INSERT INTO functions (id, func_name, func_type, version, range, damage, energy, cost, effects) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, body.func_name, body.func_type ?? 'attack', body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '').run();
       return new Response(JSON.stringify({ id }), {
         status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
@@ -447,15 +452,15 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { func_name: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
+      let body: { func_name: string; func_type?: string; version: string; range: string; damage: string; energy: string; cost: string; effects: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
       const result = await env.DB.prepare(
-        'UPDATE functions SET func_name = ?, version = ?, range = ?, damage = ?, energy = ?, cost = ?, effects = ? WHERE id = ?'
-      ).bind(body.func_name, body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '', funcMatch[1]).run();
+        'UPDATE functions SET func_name = ?, func_type = ?, version = ?, range = ?, damage = ?, energy = ?, cost = ?, effects = ? WHERE id = ?'
+      ).bind(body.func_name, body.func_type ?? 'attack', body.version ?? '', body.range ?? '', body.damage ?? '', body.energy ?? '', body.cost ?? '', body.effects ?? '', funcMatch[1]).run();
       if (!result.meta.changes) {
         return new Response(JSON.stringify({ error: 'Function not found' }), {
           status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
