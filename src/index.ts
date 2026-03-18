@@ -293,7 +293,7 @@ export default {
       const results = rows.results.map(r => ({
         ...r,
         borderColor: r.border_color,
-        properties: JSON.parse(r.properties),
+        properties: r.properties ?? '',
       }));
       return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -307,7 +307,7 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { name: string; color: string; borderColor: string; properties?: Record<string, string> };
+      let body: { name: string; color: string; borderColor: string; properties?: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -321,7 +321,7 @@ export default {
       const id = generateId();
       await env.DB.prepare(
         'INSERT INTO hex_types (id, name, color, border_color, properties) VALUES (?, ?, ?, ?, ?)'
-      ).bind(id, body.name, body.color, body.borderColor, JSON.stringify(body.properties ?? {})).run();
+      ).bind(id, body.name, body.color, body.borderColor, body.properties ?? '').run();
       return new Response(JSON.stringify({ id }), {
         status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
@@ -335,7 +335,7 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { name: string; color: string; borderColor: string; properties?: Record<string, string> };
+      let body: { name: string; color: string; borderColor: string; properties?: string };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -343,7 +343,7 @@ export default {
       }
       const result = await env.DB.prepare(
         'UPDATE hex_types SET name = ?, color = ?, border_color = ?, properties = ? WHERE id = ?'
-      ).bind(body.name, body.color, body.borderColor, JSON.stringify(body.properties ?? {}), hexTypeMatch[1]).run();
+      ).bind(body.name, body.color, body.borderColor, body.properties ?? '', hexTypeMatch[1]).run();
       if (!result.meta.changes) {
         return new Response(JSON.stringify({ error: 'Not found' }), {
           status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
