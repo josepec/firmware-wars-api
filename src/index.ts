@@ -598,7 +598,7 @@ export default {
     }
 
     /* ── GET /api/threats/:id — obtener amenaza ────────────── */
-    const threatMatch = pathname.match(/^\/api\/threats\/([a-z0-9]+)$/);
+    const threatMatch = pathname.match(/^\/api\/threats\/([a-zA-Z0-9]+)$/);
     if (threatMatch && request.method === 'GET') {
       const row = await env.DB.prepare(
         'SELECT id, name, description, data, created_at, updated_at FROM threats WHERE id = ?'
