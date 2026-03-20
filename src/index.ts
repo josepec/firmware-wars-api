@@ -224,7 +224,7 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { title: string; data: unknown };
+      let body: { title: string; data: any };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -234,6 +234,19 @@ export default {
         return new Response(JSON.stringify({ error: 'Missing title' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
+      }
+      // Validate unique numeroEscenario
+      const numEsc = body.data?.numeroEscenario;
+      if (numEsc != null) {
+        const all = await env.DB.prepare('SELECT id, data FROM scenarios').all<{ id: string; data: string }>();
+        const dup = all.results.find(r => {
+          try { return JSON.parse(r.data)?.numeroEscenario === numEsc; } catch { return false; }
+        });
+        if (dup) {
+          return new Response(JSON.stringify({ error: `El número de escenario ${numEsc < 10 ? '0' + numEsc : numEsc} ya está en uso.` }), {
+            status: 409, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
       }
       const id = generateId();
       const now = new Date().toISOString();
@@ -252,11 +265,24 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
-      let body: { title: string; data: unknown };
+      let body: { title: string; data: any };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
+      }
+      // Validate unique numeroEscenario (exclude self)
+      const numEsc = body.data?.numeroEscenario;
+      if (numEsc != null) {
+        const all = await env.DB.prepare('SELECT id, data FROM scenarios WHERE id != ?').bind(scenarioMatch[1]).all<{ id: string; data: string }>();
+        const dup = all.results.find(r => {
+          try { return JSON.parse(r.data)?.numeroEscenario === numEsc; } catch { return false; }
+        });
+        if (dup) {
+          return new Response(JSON.stringify({ error: `El número de escenario ${numEsc < 10 ? '0' + numEsc : numEsc} ya está en uso.` }), {
+            status: 409, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
       }
       const now = new Date().toISOString();
       const result = await env.DB.prepare(
