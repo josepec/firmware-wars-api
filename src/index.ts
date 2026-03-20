@@ -403,7 +403,7 @@ export default {
     }
 
     /* ── GET /api/functions/:id — obtener función ───────────────── */
-    const funcMatch = pathname.match(/^\/api\/functions\/([a-z0-9]+)$/);
+    const funcMatch = pathname.match(/^\/api\/functions\/([a-zA-Z0-9]+)$/);
     if (funcMatch && request.method === 'GET') {
       const row = await env.DB.prepare(
         'SELECT id, func_name, func_type, version, range, damage, energy, cost, effects FROM functions WHERE id = ?'
