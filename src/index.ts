@@ -105,6 +105,40 @@ export default {
       });
     }
 
+    /* ── GET /scenarios-pdf — redirige a la URL versionada ──── */
+    if (pathname === '/scenarios-pdf') {
+      const meta = await env.META.get<VersionMeta>('scenarios-version', 'json');
+      if (!meta) {
+        return new Response(
+          'No hay ningún PDF de escenarios generado todavía. Ejecuta: npm run publish-scenarios patch',
+          { status: 404, headers: CORS_HEADERS },
+        );
+      }
+      const version = versionString(meta);
+      return new Response(null, {
+        status: 302,
+        headers: { ...CORS_HEADERS, 'Location': `/scenarios-pdf/v${version}`, 'Cache-Control': 'no-store' },
+      });
+    }
+
+    /* ── GET /scenarios-pdf/v{version} — sirve PDF desde R2 ── */
+    const scenariosPdfMatch = pathname.match(/^\/scenarios-pdf\/v([\d.]+)$/);
+    if (scenariosPdfMatch) {
+      const version = scenariosPdfMatch[1];
+      const object = await env.ASSETS.get(`scenarios-v${version}.pdf`);
+      if (!object) {
+        return new Response(`PDF escenarios v${version} no encontrado.`, { status: 404, headers: CORS_HEADERS });
+      }
+      return new Response(object.body, {
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="firmware-wars-scenarios-v${version}.pdf"`,
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    }
+
     /* ── POST /api/lists — guardar una lista nueva ──────────── */
     if (pathname === '/api/lists' && request.method === 'POST') {
       const contentLength = parseInt(request.headers.get('content-length') ?? '0');
