@@ -227,7 +227,7 @@ export default {
 
     /* ── GET /api/scenarios — listar escenarios ──────────────── */
     if (pathname === '/api/scenarios' && request.method === 'GET') {
-      const full = url.searchParams.has('full');
+      const full = new URL(request.url).searchParams.has('full');
       const sql = full
         ? 'SELECT id, title, data, updated_at FROM scenarios ORDER BY created_at DESC'
         : 'SELECT id, title, updated_at FROM scenarios ORDER BY created_at DESC';
