@@ -227,10 +227,15 @@ export default {
 
     /* ── GET /api/scenarios — listar escenarios ──────────────── */
     if (pathname === '/api/scenarios' && request.method === 'GET') {
-      const rows = await env.DB.prepare(
-        'SELECT id, title, updated_at FROM scenarios ORDER BY created_at DESC'
-      ).all<{ id: string; title: string; updated_at: string }>();
-      return new Response(JSON.stringify(rows.results), {
+      const full = url.searchParams.has('full');
+      const sql = full
+        ? 'SELECT id, title, data, updated_at FROM scenarios ORDER BY created_at DESC'
+        : 'SELECT id, title, updated_at FROM scenarios ORDER BY created_at DESC';
+      const rows = await env.DB.prepare(sql).all();
+      const results = full
+        ? rows.results.map((r: any) => ({ ...r, data: r.data ? JSON.parse(r.data) : {} }))
+        : rows.results;
+      return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
