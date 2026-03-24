@@ -171,7 +171,7 @@ const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
 
 try {
-  const { page: pgCfg } = cfg;
+  const { page: pgCfg, header: hCfg, pageNumber: pnCfg, content: ctCfg } = cfg;
   const pdfOpts = {
     format: pgCfg.format,
     printBackground: true,
@@ -181,6 +181,17 @@ try {
 
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 120_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 120_000 });
+
+  /* ── Inyectar custom properties de contenido desde config ── */
+  if (ctCfg) {
+    await page.evaluate((ct) => {
+      const s = document.documentElement.style;
+      if (ct.paddingTop) s.setProperty('--pdf-content-pt', ct.paddingTop);
+      if (ct.paddingRight) s.setProperty('--pdf-content-pr', ct.paddingRight);
+      if (ct.paddingBottom) s.setProperty('--pdf-content-pb', ct.paddingBottom);
+      if (ct.paddingLeft) s.setProperty('--pdf-content-pl', ct.paddingLeft);
+    }, ctCfg);
+  }
 
   /* Pass 1 */
   const pass1Pdf = await page.pdf(pdfOpts);
@@ -193,6 +204,32 @@ try {
   for (const s of sectionMap) {
     console.log(`    ${s.id.padEnd(8)} ${(s.label || '').substring(0, 30).padEnd(30)} → pág. ${s.startPage}`);
   }
+
+  /* ── Detectar páginas en blanco espurias ────────────────── */
+  const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
+  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+
+  /* Páginas en blanco intencionadas: la página justo antes de la siguiente
+     sección, para cada sección con blankAfter: true en el config.          */
+  const blankAfterIds = new Set(
+    (cfgFull.sections ?? []).filter(s => s.blankAfter).map(s => s.num),
+  );
+  const intentionalBlanks = new Set();
+  for (let i = 0; i < sectionMap.length - 1; i++) {
+    if (blankAfterIds.has(sectionMap[i].id)) {
+      // La blank page está justo antes de la siguiente sección
+      const nextStart = sectionMap[i + 1].startPage;
+      const blankPage = nextStart - 1;
+      if (blankPages.includes(blankPage)) intentionalBlanks.add(blankPage);
+    }
+  }
+
+  const spuriousBlanks = blankPages.filter(p => p >= firstContentPage && !intentionalBlanks.has(p));
+
+  console.log(`  Páginas en blanco detectadas: [${blankPages.join(', ')}]`);
+  console.log(`  Intencionadas (blankAfter):  [${[...intentionalBlanks].join(', ')}]`);
+  console.log(`  Primera página de contenido: ${firstContentPage}`);
+  console.log(`  Páginas espurias a eliminar: [${spuriousBlanks.join(', ')}]`);
 
   /* Pass 2: inject version and TOC page numbers */
   const adjustedMap = sectionMap.map(s => ({ ...s })); // no spurious blank removal for now
@@ -210,9 +247,33 @@ try {
   const pass2Pdf = await page.pdf(pdfOpts);
   console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${(await PDFDocument.load(pass2Pdf)).getPageCount()} págs.)`);
 
-  /* Post-process: add headers/footers with pdf-lib */
+  /* ── Generar portada aislada desde /docs/cover-print ────── */
+  const coverUrl = `${appUrl}/docs/cover-print?worker=1`
+    + `&subtitle=${encodeURIComponent('Escenarios y Amenazas')}`
+    + `&image=${encodeURIComponent('assets/img/cover-scenarios.png')}`;
+  const coverPage = await browser.newPage();
+  await coverPage.goto(coverUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
+  await coverPage.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+
+  // Inyectar versión en la portada aislada
+  await coverPage.evaluate((ver) => {
+    const el = document.getElementById('cover-version');
+    if (el) el.textContent = `v${ver}`;
+  }, version);
+
+  const coverPdf = await coverPage.pdf({
+    ...pdfOpts,
+    margin: { top: '0', right: '0', bottom: '0', left: '0' },
+  });
+  await coverPage.close();
+  console.log(`✔ Portada aislada generada  (${(coverPdf.byteLength / 1024).toFixed(1)} KB)`);
+
+  /* ── Reemplazar página 1 con la portada aislada ────────── */
   const pdfDoc = await PDFDocument.load(pass2Pdf);
-  const { header: hCfg, pageNumber: pnCfg } = cfg;
+  const coverDoc = await PDFDocument.load(coverPdf);
+  const [importedCover] = await pdfDoc.copyPages(coverDoc, [0]);
+  pdfDoc.removePage(0);
+  pdfDoc.insertPage(0, importedCover);
 
   const font = await pdfDoc.embedFont(StandardFonts.Courier);
   const textColor = hexToRgb(hCfg.textColor);
@@ -224,14 +285,22 @@ try {
   const sideMarginPt = cmToPt(pgCfg.margin.left);
   const yPnPt = cmToPt(pnCfg.yFromBottom);
 
+  /* Páginas sin header/footer: portada(1), blanco(2), índice(3), + FWMARK-SKIP */
+  const skipPages = new Set([1, 2, 3]);
+  for (const s of adjustedMap) {
+    if (s.id === 'SKIP') skipPages.add(s.startPage);
+  }
+
   pdfDoc.getPages().forEach((p, i) => {
     const pageNum = i + 1;
+    if (skipPages.has(pageNum)) return;
     const label = getLabelForPage(adjustedMap, pageNum);
     if (!label) return;
 
     const { width: W, height: H } = p.getSize();
-    const isRecto = pageNum % 2 === 1;
-    const hTextY = H - topMarginPt + (topMarginPt - hFontSize) / 2;
+    const isRecto = pageNum % 2 === 1;          // impar = recto (derecha)
+    const headerLineY = H - topMarginPt;
+    const hTextY = headerLineY + (topMarginPt - hFontSize) / 2;
 
     const sectionText = hCfg.sectionPrefix + label;
     const versionText = `ESCENARIOS v${version}`;

@@ -299,8 +299,36 @@ try {
 
   console.log(`✔ Pasada 2 completada  (${(pass2Pdf.byteLength / 1024).toFixed(1)} KB, ${pass2Pages} págs.)`);
 
+  /* ── Generar portada aislada desde /docs/cover-print ────── */
+  const coverUrl = `${appUrl}/docs/cover-print?worker=1`
+    + `&subtitle=${encodeURIComponent('Manual del Juego')}`
+    + `&image=${encodeURIComponent('assets/img/cover-bots.png')}`
+    + `&systemLine=${encodeURIComponent('Core Combat System')}`;
+  const coverPage = await browser.newPage();
+  await coverPage.goto(coverUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
+  await coverPage.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+
+  // Inyectar versión en la portada aislada
+  await coverPage.evaluate((ver) => {
+    const el = document.getElementById('cover-version');
+    if (el) el.textContent = `v${ver}`;
+  }, version);
+
+  const coverPdf = await coverPage.pdf({
+    ...pdfOpts,
+    margin: { top: '0', right: '0', bottom: '0', left: '0' },
+  });
+  await coverPage.close();
+  console.log(`✔ Portada aislada generada  (${(coverPdf.byteLength / 1024).toFixed(1)} KB)`);
+
   /* ── POST-PROCESO: headers, footers y números de página con pdf-lib ── */
   let pdfDoc = await PDFDocument.load(pass2Pdf);
+
+  /* Reemplazar página 1 con la portada aislada */
+  const coverDoc = await PDFDocument.load(coverPdf);
+  const [importedCover] = await pdfDoc.copyPages(coverDoc, [0]);
+  pdfDoc.removePage(0);
+  pdfDoc.insertPage(0, importedCover);
 
   /* Eliminar páginas en blanco espurias (en orden inverso para no alterar índices) */
   if (spuriousBlanks.length) {
