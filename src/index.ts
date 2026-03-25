@@ -229,8 +229,8 @@ export default {
     if (pathname === '/api/scenarios' && request.method === 'GET') {
       const full = new URL(request.url).searchParams.has('full');
       const sql = full
-        ? 'SELECT id, title, data, updated_at FROM scenarios ORDER BY created_at DESC'
-        : 'SELECT id, title, updated_at FROM scenarios ORDER BY created_at DESC';
+        ? 'SELECT id, title, data, updated_at FROM scenarios ORDER BY json_extract(data, \'$.numeroEscenario\') ASC'
+        : 'SELECT id, title, updated_at FROM scenarios ORDER BY json_extract(data, \'$.numeroEscenario\') ASC';
       const rows = await env.DB.prepare(sql).all();
       const results = full
         ? rows.results.map((r: any) => ({ ...r, data: r.data ? JSON.parse(r.data) : {} }))

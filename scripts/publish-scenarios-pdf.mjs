@@ -118,7 +118,7 @@ const tmpFile = join(tmpdir(), `firmware-wars-scenarios-v${version}.pdf`);
 console.log(`\n📄 Generando PDF Escenarios v${version}  (${ver(current)} → ${version})`);
 console.log(`   Fuente: ${printUrl}\n`);
 
-const MARKER_RE = /FWMARK-(\w+?)(?:-(.+?))?(?=\s|$)/g;
+const MARKER_RE = /FWMARK-(\w+?)(?:-(.+?)-FWEND|(?=\s|$))/g;
 
 async function extractSectionMap(pdfBuffer) {
   const doc = await getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
@@ -207,10 +207,9 @@ try {
 
   /* ── Detectar páginas en blanco espurias ────────────────── */
   const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
-  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 5;
+  const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 4;
 
-  /* Páginas en blanco intencionadas: la página justo antes de la siguiente
-     sección, para cada sección con blankAfter: true en el config.          */
+  /* Páginas en blanco intencionadas: TODO.          */
   const blankAfterIds = new Set(
     (cfgFull.sections ?? []).filter(s => s.blankAfter).map(s => s.num),
   );
