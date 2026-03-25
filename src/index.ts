@@ -139,6 +139,40 @@ export default {
       });
     }
 
+    /* ── GET /campaign-pdf — redirige a la URL versionada ───── */
+    if (pathname === '/campaign-pdf') {
+      const meta = await env.META.get<VersionMeta>('campaign-version', 'json');
+      if (!meta) {
+        return new Response(
+          'No hay ningún PDF de campaña generado todavía. Ejecuta: npm run publish-campaign patch',
+          { status: 404, headers: CORS_HEADERS },
+        );
+      }
+      const version = versionString(meta);
+      return new Response(null, {
+        status: 302,
+        headers: { ...CORS_HEADERS, 'Location': `/campaign-pdf/v${version}`, 'Cache-Control': 'no-store' },
+      });
+    }
+
+    /* ── GET /campaign-pdf/v{version} — sirve PDF desde R2 ─── */
+    const campaignPdfMatch = pathname.match(/^\/campaign-pdf\/v([\d.]+)$/);
+    if (campaignPdfMatch) {
+      const version = campaignPdfMatch[1];
+      const object = await env.ASSETS.get(`campaign-v${version}.pdf`);
+      if (!object) {
+        return new Response(`PDF campaña v${version} no encontrado.`, { status: 404, headers: CORS_HEADERS });
+      }
+      return new Response(object.body, {
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="firmware-wars-campaign-v${version}.pdf"`,
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    }
+
     /* ── POST /api/lists — guardar una lista nueva ──────────── */
     if (pathname === '/api/lists' && request.method === 'POST') {
       const contentLength = parseInt(request.headers.get('content-length') ?? '0');
