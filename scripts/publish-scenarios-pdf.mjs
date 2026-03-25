@@ -132,7 +132,7 @@ async function extractSectionMap(pdfBuffer) {
       const label = match[2];
       map.push({
         id,
-        label: label ?? (id === 'TOC' ? 'ÍNDICE' : id),
+        label: label ?? (id === 'TOC' ? 'ÍNDICE' : id === 'SKIP' ? null : id),
         startPage: i,
       });
     }
@@ -209,17 +209,22 @@ try {
   const blankPages = await detectBlankPages(Buffer.from(pass1Pdf));
   const firstContentPage = sectionMap.find(s => s.id !== 'TOC')?.startPage ?? 4;
 
-  /* Páginas en blanco intencionadas: TODO.          */
+  /* Páginas en blanco intencionadas */
   const blankAfterIds = new Set(
     (cfgFull.sections ?? []).filter(s => s.blankAfter).map(s => s.num),
   );
   const intentionalBlanks = new Set();
   for (let i = 0; i < sectionMap.length - 1; i++) {
     if (blankAfterIds.has(sectionMap[i].id)) {
-      // La blank page está justo antes de la siguiente sección
       const nextStart = sectionMap[i + 1].startPage;
       const blankPage = nextStart - 1;
       if (blankPages.includes(blankPage)) intentionalBlanks.add(blankPage);
+    }
+  }
+  /* Páginas SKIP que resultan blank también son intencionadas */
+  for (const s of sectionMap) {
+    if (s.id === 'SKIP' && blankPages.includes(s.startPage)) {
+      intentionalBlanks.add(s.startPage);
     }
   }
 
