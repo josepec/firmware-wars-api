@@ -292,7 +292,14 @@ try {
   /* Páginas sin header/footer: portada(1), blanco(2), índice(3), + FWMARK-SKIP */
   const skipPages = new Set([1, 2, 3]);
   for (const s of adjustedMap) {
-    if (s.id === 'SKIP') skipPages.add(s.startPage);
+    if (s.id === 'SKIP') {
+      skipPages.add(s.startPage);
+      /* Página en blanco justo antes de un SKIP también se salta
+         (su marker a 0.5px puede no ser extraído por pdfjs) */
+      if (blankPages.includes(s.startPage - 1)) {
+        skipPages.add(s.startPage - 1);
+      }
+    }
   }
 
   pdfDoc.getPages().forEach((p, i) => {
