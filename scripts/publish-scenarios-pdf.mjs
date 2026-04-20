@@ -182,6 +182,25 @@ try {
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 120_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 120_000 });
 
+  //IMPORTATE: Hay que tocar el valor de zoom si se desajusta
+  /* Inyecta zoom en runtime sobre las páginas de contenido + TOC.
+     Dentro de @media print + !important para ganar al CSS encapsulado de Angular.
+     Independiente del build de Cloudflare. */
+  await page.addStyleTag({
+    content: `
+      @media print {
+        .sp-page.toc-page,
+        .sp-page.scenario-page,
+        .sp-page.scenario-page-right,
+        .sp-page.threat-page,
+        .sp-page.threat-page-right,
+        .sp-page.divider-page {
+          zoom: 0.864 !important;
+        }
+      }
+    `,
+  });
+
   /* ── Inyectar custom properties de contenido desde config ── */
   if (ctCfg) {
     await page.evaluate((ct) => {
