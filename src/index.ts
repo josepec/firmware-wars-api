@@ -754,6 +754,197 @@ export default {
       });
     }
 
+    /* ── GET /api/battles — listar reports (admin) ──────────── */
+    if (pathname === '/api/battles' && request.method === 'GET') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const rows = await env.DB.prepare(
+        `SELECT id, title, status, winner, player1_alias, player2_alias, created_at
+         FROM battle_reports ORDER BY created_at DESC`
+      ).all<{ id: string; title: string; status: string; winner: number | null; player1_alias: string; player2_alias: string; created_at: string }>();
+      const results = rows.results.map(r => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        winner: r.winner,
+        player1Alias: r.player1_alias,
+        player2Alias: r.player2_alias,
+        createdAt: r.created_at,
+      }));
+      return new Response(JSON.stringify(results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/battles/:id — obtener report completo (admin) ── */
+    const battleMatch = pathname.match(/^\/api\/battles\/([a-z0-9]+)$/);
+    if (battleMatch && request.method === 'GET') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const row = await env.DB.prepare(
+        `SELECT id, title, scenario_id, list1_id, list2_id, player1_alias, player2_alias,
+                status, winner, initial_snapshot, events, final_state, created_at, updated_at
+         FROM battle_reports WHERE id = ?`
+      ).bind(battleMatch[1]).first<{
+        id: string; title: string; scenario_id: string | null; list1_id: string; list2_id: string;
+        player1_alias: string; player2_alias: string; status: string; winner: number | null;
+        initial_snapshot: string; events: string; final_state: string | null;
+        created_at: string; updated_at: string;
+      }>();
+      if (!row) {
+        return new Response(JSON.stringify({ error: 'Battle not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        id: row.id,
+        title: row.title,
+        scenarioId: row.scenario_id,
+        list1Id: row.list1_id,
+        list2Id: row.list2_id,
+        player1Alias: row.player1_alias,
+        player2Alias: row.player2_alias,
+        status: row.status,
+        winner: row.winner,
+        initialSnapshot: JSON.parse(row.initial_snapshot),
+        events: JSON.parse(row.events),
+        finalState: row.final_state ? JSON.parse(row.final_state) : null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/battles — crear report (admin) ──────────── */
+    if (pathname === '/api/battles' && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: {
+        title: string; scenarioId?: string | null; list1Id: string; list2Id: string;
+        player1Alias: string; player2Alias: string; initialSnapshot: unknown;
+      };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!body.title || !body.list1Id || !body.list2Id || !body.initialSnapshot) {
+        return new Response(JSON.stringify({ error: 'Missing fields' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        `INSERT INTO battle_reports
+         (id, title, scenario_id, list1_id, list2_id, player1_alias, player2_alias,
+          status, winner, initial_snapshot, events, final_state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, ?, '[]', NULL, ?, ?)`
+      ).bind(
+        id, body.title, body.scenarioId ?? null, body.list1Id, body.list2Id,
+        body.player1Alias ?? '', body.player2Alias ?? '',
+        JSON.stringify(body.initialSnapshot), now, now,
+      ).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PATCH /api/battles/:id/events — append-only (admin) ── */
+    const battleEventsMatch = pathname.match(/^\/api\/battles\/([a-z0-9]+)\/events$/);
+    if (battleEventsMatch && request.method === 'PATCH') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { events: unknown[] };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!Array.isArray(body.events)) {
+        return new Response(JSON.stringify({ error: 'events must be an array' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const row = await env.DB.prepare(
+        'SELECT events FROM battle_reports WHERE id = ?'
+      ).bind(battleEventsMatch[1]).first<{ events: string }>();
+      if (!row) {
+        return new Response(JSON.stringify({ error: 'Battle not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const existing = JSON.parse(row.events) as unknown[];
+      const merged = [...existing, ...body.events];
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        'UPDATE battle_reports SET events = ?, updated_at = ? WHERE id = ?'
+      ).bind(JSON.stringify(merged), now, battleEventsMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true, count: merged.length }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PATCH /api/battles/:id/finish — cerrar partida (admin) ── */
+    const battleFinishMatch = pathname.match(/^\/api\/battles\/([a-z0-9]+)\/finish$/);
+    if (battleFinishMatch && request.method === 'PATCH') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { winner: 1 | 2 | null; finalState: unknown };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const now = new Date().toISOString();
+      const result = await env.DB.prepare(
+        `UPDATE battle_reports SET status = 'finished', winner = ?, final_state = ?, updated_at = ?
+         WHERE id = ?`
+      ).bind(
+        body.winner ?? null,
+        body.finalState ? JSON.stringify(body.finalState) : null,
+        now,
+        battleFinishMatch[1],
+      ).run();
+      if (!result.meta.changes) {
+        return new Response(JSON.stringify({ error: 'Battle not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── DELETE /api/battles/:id — borrar report (admin) ──── */
+    if (battleMatch && request.method === 'DELETE') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      await env.DB.prepare('DELETE FROM battle_reports WHERE id = ?').bind(battleMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   },
 };
