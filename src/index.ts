@@ -762,9 +762,10 @@ export default {
         });
       }
       const rows = await env.DB.prepare(
-        `SELECT id, title, status, winner, player1_alias, player2_alias, created_at
+        `SELECT id, title, status, winner, player1_alias, player2_alias, created_at,
+                (CASE WHEN events LIKE '%"kind":"debug_enabled"%' THEN 1 ELSE 0 END) AS is_debug
          FROM battle_reports ORDER BY created_at DESC`
-      ).all<{ id: string; title: string; status: string; winner: number | null; player1_alias: string; player2_alias: string; created_at: string }>();
+      ).all<{ id: string; title: string; status: string; winner: number | null; player1_alias: string; player2_alias: string; created_at: string; is_debug: number }>();
       const results = rows.results.map(r => ({
         id: r.id,
         title: r.title,
@@ -773,6 +774,7 @@ export default {
         player1Alias: r.player1_alias,
         player2Alias: r.player2_alias,
         createdAt: r.created_at,
+        isDebug: r.is_debug === 1,
       }));
       return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -894,6 +896,44 @@ export default {
         'UPDATE battle_reports SET events = ?, updated_at = ? WHERE id = ?'
       ).bind(JSON.stringify(merged), now, battleEventsMatch[1]).run();
       return new Response(JSON.stringify({ ok: true, count: merged.length }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/battles/:id/events/truncate — Debug rewind (admin) ── */
+    const battleTruncateMatch = pathname.match(/^\/api\/battles\/([a-z0-9]+)\/events\/truncate$/);
+    if (battleTruncateMatch && request.method === 'POST') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { keepFirst: number };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (typeof body.keepFirst !== 'number' || body.keepFirst < 0) {
+        return new Response(JSON.stringify({ error: 'keepFirst must be a non-negative number' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const row = await env.DB.prepare(
+        'SELECT events FROM battle_reports WHERE id = ?'
+      ).bind(battleTruncateMatch[1]).first<{ events: string }>();
+      if (!row) {
+        return new Response(JSON.stringify({ error: 'Battle not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const existing = JSON.parse(row.events) as unknown[];
+      const truncated = existing.slice(0, body.keepFirst);
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        'UPDATE battle_reports SET events = ?, updated_at = ? WHERE id = ?'
+      ).bind(JSON.stringify(truncated), now, battleTruncateMatch[1]).run();
+      return new Response(JSON.stringify({ ok: true, count: truncated.length }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       });
     }
