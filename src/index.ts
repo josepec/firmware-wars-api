@@ -781,6 +781,87 @@ export default {
       });
     }
 
+    /* ── GET /api/battles/stats — balance stats (admin) ───────── */
+    if (pathname === '/api/battles/stats' && request.method === 'GET') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const statRows = await env.DB.prepare(
+        `SELECT initial_snapshot, events, winner FROM battle_reports
+         WHERE status = 'finished'
+           AND events NOT LIKE '%"kind":"debug_enabled"%'`
+      ).all<{ initial_snapshot: string; events: string; winner: number | null }>();
+      type FmtKey = '1v1' | '2v2';
+      interface Acc {
+        count: number; totalRounds: number;
+        winP1: number; winP2: number; draw: number;
+        roundDist: number[]; deathsByRound: number[];
+        firstDeathByRound: number[];
+        damageSumByRound: number[]; damageCountByRound: number[];
+        bugsAddedByRound: number[];
+      }
+      const MAX = 10;
+      const mk = (): Acc => ({
+        count: 0, totalRounds: 0, winP1: 0, winP2: 0, draw: 0,
+        roundDist: Array(MAX).fill(0), deathsByRound: Array(MAX).fill(0),
+        firstDeathByRound: Array(MAX).fill(0),
+        damageSumByRound: Array(MAX).fill(0), damageCountByRound: Array(MAX).fill(0),
+        bugsAddedByRound: Array(MAX).fill(0),
+      });
+      const acc: Record<FmtKey, Acc> = { '1v1': mk(), '2v2': mk() };
+      for (const row of statRows.results) {
+        let snap: { bots: unknown[] };
+        let evs: Array<{ turn: number; phase: string; kind: string; payload: Record<string, unknown> }>;
+        try { snap = JSON.parse(row.initial_snapshot); evs = JSON.parse(row.events); } catch { continue; }
+        const fmt: FmtKey = (snap.bots?.length ?? 2) <= 2 ? '1v1' : '2v2';
+        const a = acc[fmt];
+        a.count++;
+        if (row.winner === 1) a.winP1++; else if (row.winner === 2) a.winP2++; else a.draw++;
+        const rounds = evs.filter(e => e.kind === 'round_ended').length;
+        a.totalRounds += rounds;
+        if (rounds >= 1 && rounds <= MAX) a.roundDist[rounds - 1]++;
+        let fd: number | null = null;
+        for (const ev of evs) {
+          if (ev.phase !== 'run') continue;
+          const r = ev.turn; if (r < 1 || r > MAX) continue;
+          if (ev.kind === 'destroyed') {
+            a.deathsByRound[r - 1]++;
+            if (fd === null || r < fd) fd = r;
+          } else if (ev.kind === 'attack_hit') {
+            const dmg = ev.payload['damage'];
+            if (typeof dmg === 'number' && dmg > 0) {
+              a.damageSumByRound[r - 1] += dmg; a.damageCountByRound[r - 1]++;
+            }
+          } else if (ev.kind === 'bug_added') {
+            a.bugsAddedByRound[r - 1]++;
+          }
+        }
+        if (fd !== null) a.firstDeathByRound[fd - 1]++;
+      }
+      const trim = (arr: number[]) => {
+        let i = arr.length - 1; while (i > 0 && arr[i] === 0) i--; return arr.slice(0, i + 1);
+      };
+      const finalize = (a: Acc) => ({
+        count: a.count,
+        avgRounds: a.count > 0 ? Math.round(a.totalRounds / a.count * 10) / 10 : 0,
+        winP1: a.winP1, winP2: a.winP2, draw: a.draw,
+        roundDist: trim(a.roundDist),
+        deathsByRound: trim(a.deathsByRound),
+        firstDeathByRound: trim(a.firstDeathByRound),
+        avgDamageByRound: trim(a.damageSumByRound.map((s, i) => {
+          const c = a.damageCountByRound[i]; return c > 0 ? Math.round(s / c * 10) / 10 : 0;
+        })),
+        bugsAddedByRound: trim(a.bugsAddedByRound),
+      });
+      return new Response(JSON.stringify({
+        total: statRows.results.length,
+        '1v1': finalize(acc['1v1']),
+        '2v2': finalize(acc['2v2']),
+      }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+    }
+
     /* ── GET /api/battles/:id — obtener report completo (admin) ── */
     const battleMatch = pathname.match(/^\/api\/battles\/([a-z0-9]+)$/);
     if (battleMatch && request.method === 'GET') {
