@@ -1,8 +1,16 @@
+import { EmailMessage } from 'cloudflare:email';
+
 interface Env {
   ASSETS: R2Bucket;
   META: KVNamespace;
   DB: D1Database;
   ADMIN_PASSWORD: string;
+  /** Binding send_email de Email Routing (aviso de consultas). Opcional:
+   *  sin él (p. ej. wrangler dev) las consultas se guardan igual sin aviso. */
+  SEND_EMAIL?: SendEmail;
+  /** Remitente (dirección del dominio de la zona) y destino verificado. */
+  CONTACT_EMAIL_FROM?: string;
+  CONTACT_EMAIL_TO?: string;
 }
 
 interface VersionMeta {
@@ -25,6 +33,32 @@ function generateId(len = 8): string {
 }
 
 const MAX_PAYLOAD = 32_000;
+
+/** Aviso por email de una consulta nueva (Email Routing send_email).
+ *  Nunca lanza: sin binding/vars o con error, la consulta ya está guardada. */
+async function sendContactEmail(env: Env, name: string, email: string | null, message: string): Promise<void> {
+  if (!env.SEND_EMAIL || !env.CONTACT_EMAIL_FROM || !env.CONTACT_EMAIL_TO) return;
+  try {
+    const subject = `[Firmware Wars] Consulta de ${name}`.slice(0, 120);
+    const raw = [
+      `From: Firmware Wars Helpdesk <${env.CONTACT_EMAIL_FROM}>`,
+      `To: ${env.CONTACT_EMAIL_TO}`,
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      `Alias: ${name}`,
+      `Canal de respuesta: ${email ?? '(no indicado)'}`,
+      '',
+      message,
+      '',
+      '— Enviado desde /soporte · gestion en /admin/messages',
+    ].join('\r\n');
+    await env.SEND_EMAIL.send(new EmailMessage(env.CONTACT_EMAIL_FROM, env.CONTACT_EMAIL_TO, raw));
+  } catch {
+    // El aviso es best-effort
+  }
+}
 
 function versionString(v: VersionMeta): string {
   return `${v.major}.${v.minor}.${v.patch}`;
@@ -384,6 +418,255 @@ export default {
       });
     }
 
+    /* ══ NOTICIAS (posts) ══════════════════════════════════════ */
+
+    /* ── GET /api/posts — listado (público: publicados; admin: todos) ── */
+    if (pathname === '/api/posts' && request.method === 'GET') {
+      const isAdmin = verifyAdmin();
+      const sql = isAdmin
+        ? 'SELECT id, slug, title, header_image, published, published_at, created_at, updated_at FROM posts ORDER BY COALESCE(published_at, created_at) DESC'
+        : 'SELECT id, slug, title, header_image, published_at FROM posts WHERE published = 1 ORDER BY published_at DESC';
+      const rows = await env.DB.prepare(sql).all();
+      return new Response(JSON.stringify(rows.results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/posts/:slug — detalle (borradores solo admin) ── */
+    const postMatch = pathname.match(/^\/api\/posts\/([a-z0-9-]+)$/);
+    if (postMatch && request.method === 'GET') {
+      const isAdmin = verifyAdmin();
+      // El editor admin carga por id; el público por slug — se aceptan ambos
+      const row = await env.DB.prepare(
+        'SELECT id, slug, title, content, header_image, published, published_at, created_at, updated_at FROM posts WHERE slug = ? OR id = ?'
+      ).bind(postMatch[1], postMatch[1]).first();
+      if (!row || (!isAdmin && !(row as { published: number }).published)) {
+        return new Response(JSON.stringify({ error: 'Post not found' }), {
+          status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(row), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/posts · PUT/DELETE /api/posts/:id (admin) ── */
+    if ((pathname === '/api/posts' && request.method === 'POST')
+        || (postMatch && (request.method === 'PUT' || request.method === 'DELETE'))) {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (request.method === 'DELETE') {
+        await env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postMatch![1]).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { slug: string; title: string; content: string; headerImage?: string | null; published?: boolean };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const slug = (body.slug ?? '').trim();
+      const title = (body.title ?? '').trim();
+      const content = body.content ?? '';
+      if (!title || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) || slug.length > 80 || content.length > 64_000) {
+        return new Response(JSON.stringify({ error: 'Invalid post: title requerido, slug [a-z0-9-] ≤80, content ≤64KB' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const editId = request.method === 'PUT' ? postMatch![1] : null;
+      const dup = await env.DB.prepare('SELECT id FROM posts WHERE slug = ? AND id != ?')
+        .bind(slug, editId ?? '').first();
+      if (dup) {
+        return new Response(JSON.stringify({ error: 'slug_exists' }), {
+          status: 409, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const now = new Date().toISOString();
+      const published = body.published ? 1 : 0;
+      if (editId) {
+        const prev = await env.DB.prepare('SELECT published_at FROM posts WHERE id = ?')
+          .bind(editId).first<{ published_at: string | null }>();
+        if (!prev) {
+          return new Response(JSON.stringify({ error: 'Post not found' }), {
+            status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
+        const publishedAt = published && !prev.published_at ? now : prev.published_at;
+        await env.DB.prepare(
+          'UPDATE posts SET slug = ?, title = ?, content = ?, header_image = ?, published = ?, published_at = ?, updated_at = ? WHERE id = ?'
+        ).bind(slug, title, content, body.headerImage ?? null, published, publishedAt, now, editId).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      await env.DB.prepare(
+        'INSERT INTO posts (id, slug, title, content, header_image, published, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, slug, title, content, body.headerImage ?? null, published, published ? now : null, now, now).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ══ FAQS ══════════════════════════════════════════════════ */
+
+    /* ── GET /api/faqs — listado (público: publicadas; admin: todas) ── */
+    if (pathname === '/api/faqs' && request.method === 'GET') {
+      const sql = verifyAdmin()
+        ? 'SELECT id, question, answer, sort_order, published FROM faqs ORDER BY sort_order ASC, created_at ASC'
+        : 'SELECT id, question, answer, sort_order FROM faqs WHERE published = 1 ORDER BY sort_order ASC, created_at ASC';
+      const rows = await env.DB.prepare(sql).all();
+      return new Response(JSON.stringify(rows.results), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── POST /api/faqs · PUT/DELETE /api/faqs/:id (admin) ───── */
+    const faqMatch = pathname.match(/^\/api\/faqs\/([a-z0-9]+)$/);
+    if ((pathname === '/api/faqs' && request.method === 'POST')
+        || (faqMatch && (request.method === 'PUT' || request.method === 'DELETE'))) {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (request.method === 'DELETE') {
+        await env.DB.prepare('DELETE FROM faqs WHERE id = ?').bind(faqMatch![1]).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { question: string; answer: string; sortOrder?: number; published?: boolean };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const question = (body.question ?? '').trim();
+      const answer = body.answer ?? '';
+      const sortOrder = Number.isInteger(body.sortOrder) ? body.sortOrder! : 0;
+      if (!question || question.length > 300 || answer.length > 16_000) {
+        return new Response(JSON.stringify({ error: 'Invalid FAQ: question requerida ≤300, answer ≤16KB' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const now = new Date().toISOString();
+      if (faqMatch && request.method === 'PUT') {
+        const result = await env.DB.prepare(
+          'UPDATE faqs SET question = ?, answer = ?, sort_order = ?, published = ?, updated_at = ? WHERE id = ?'
+        ).bind(question, answer, sortOrder, body.published ? 1 : 0, now, faqMatch[1]).run();
+        if (!result.meta.changes) {
+          return new Response(JSON.stringify({ error: 'FAQ not found' }), {
+            status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const id = generateId();
+      await env.DB.prepare(
+        'INSERT INTO faqs (id, question, answer, sort_order, published, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, question, answer, sortOrder, body.published ? 1 : 0, now, now).run();
+      return new Response(JSON.stringify({ id }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ══ CONSULTAS (contacto) ══════════════════════════════════ */
+
+    /* ── POST /api/contact — enviar consulta (PÚBLICO) ────────── */
+    if (pathname === '/api/contact' && request.method === 'POST') {
+      const len = parseInt(request.headers.get('content-length') ?? '0', 10);
+      if (len > 8_000) {
+        return new Response(JSON.stringify({ error: 'Payload too large' }), {
+          status: 413, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      let body: { name?: string; email?: string; message?: string; website?: string };
+      try { body = await request.json(); } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      // Honeypot: los bots rellenan el campo oculto — éxito falso sin guardar
+      if (body.website) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const name = (body.name ?? '').trim();
+      const email = (body.email ?? '').trim();
+      const message = (body.message ?? '').trim();
+      const emailOk = email === '' || (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 120);
+      if (!name || name.length > 80 || !emailOk || message.length < 10 || message.length > 2_000) {
+        return new Response(JSON.stringify({ error: 'Invalid: name 1-80, email opcional válido, message 10-2000' }), {
+          status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      // Rate limit: 5 consultas/hora por IP (contador KV con TTL)
+      const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      const rlKey = `contact:${ip}`;
+      const count = parseInt((await env.META.get(rlKey)) ?? '0', 10);
+      if (count >= 5) {
+        return new Response(JSON.stringify({ error: 'rate_limited' }), {
+          status: 429, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      await env.META.put(rlKey, String(count + 1), { expirationTtl: 3600 });
+      const id = generateId();
+      await env.DB.prepare(
+        'INSERT INTO contact_messages (id, name, email, message, read, created_at) VALUES (?, ?, ?, ?, 0, ?)'
+      ).bind(id, name, email || null, message, new Date().toISOString()).run();
+      await sendContactEmail(env, name, email || null, message);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── GET /api/contact — bandeja (admin) ───────────────────── */
+    if (pathname === '/api/contact' && request.method === 'GET') {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      const rows = await env.DB.prepare(
+        'SELECT id, name, email, message, read, created_at FROM contact_messages ORDER BY created_at DESC'
+      ).all<{ read: number }>();
+      const unread = rows.results.filter(r => !r.read).length;
+      return new Response(JSON.stringify({ messages: rows.results, unread }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
+    /* ── PUT /api/contact/:id/read · DELETE /api/contact/:id (admin) ── */
+    const contactReadMatch = pathname.match(/^\/api\/contact\/([a-z0-9]+)\/read$/);
+    const contactMatch = pathname.match(/^\/api\/contact\/([a-z0-9]+)$/);
+    if ((contactReadMatch && request.method === 'PUT') || (contactMatch && request.method === 'DELETE')) {
+      if (!verifyAdmin()) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+        });
+      }
+      if (contactReadMatch) {
+        let body: { read?: boolean };
+        try { body = await request.json(); } catch { body = {}; }
+        await env.DB.prepare('UPDATE contact_messages SET read = ? WHERE id = ?')
+          .bind(body.read === false ? 0 : 1, contactReadMatch[1]).run();
+      } else {
+        await env.DB.prepare('DELETE FROM contact_messages WHERE id = ?').bind(contactMatch![1]).run();
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      });
+    }
+
     /* ── GET /api/hex-types — listar tipos de hex compartidos ── */
     if (pathname === '/api/hex-types' && request.method === 'GET') {
       const rows = await env.DB.prepare(
@@ -626,7 +909,9 @@ export default {
 
       const timestamp = Date.now();
       const random = generateId(6);
-      const key = `threats/${timestamp}-${random}.${ext}`;
+      const requestedPrefix = new URL(request.url).searchParams.get('prefix') ?? 'threats';
+      const prefix = ['threats', 'blog'].includes(requestedPrefix) ? requestedPrefix : 'threats';
+      const key = `${prefix}/${timestamp}-${random}.${ext}`;
 
       await env.ASSETS.put(key, fileBytes, {
         httpMetadata: { contentType: mimeType },
