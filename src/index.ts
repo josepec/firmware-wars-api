@@ -763,9 +763,10 @@ export default {
       }
       const rows = await env.DB.prepare(
         `SELECT id, title, status, winner, player1_alias, player2_alias, created_at,
+                COALESCE(mode, 'pvp') AS mode,
                 (CASE WHEN events LIKE '%"kind":"debug_enabled"%' THEN 1 ELSE 0 END) AS is_debug
          FROM battle_reports ORDER BY created_at DESC`
-      ).all<{ id: string; title: string; status: string; winner: number | null; player1_alias: string; player2_alias: string; created_at: string; is_debug: number }>();
+      ).all<{ id: string; title: string; status: string; winner: number | null; player1_alias: string; player2_alias: string; created_at: string; mode: string; is_debug: number }>();
       const results = rows.results.map(r => ({
         id: r.id,
         title: r.title,
@@ -775,6 +776,7 @@ export default {
         player2Alias: r.player2_alias,
         createdAt: r.created_at,
         isDebug: r.is_debug === 1,
+        mode: r.mode,
       }));
       return new Response(JSON.stringify(results), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -788,11 +790,22 @@ export default {
           status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
+      const modeFilter = new URL(request.url).searchParams.get('mode');
+      const filterByMode = modeFilter !== null && ['pvp', 'pvc', 'cvc'].includes(modeFilter);
       const statRows = await env.DB.prepare(
         `SELECT initial_snapshot, events, winner FROM battle_reports
          WHERE status = 'finished'
-           AND events NOT LIKE '%"kind":"debug_enabled"%'`
-      ).all<{ initial_snapshot: string; events: string; winner: number | null }>();
+           AND events NOT LIKE '%"kind":"debug_enabled"%'
+           ${filterByMode ? `AND COALESCE(mode, 'pvp') = ?` : ''}`
+      ).bind(...(filterByMode ? [modeFilter] : [])).all<{ initial_snapshot: string; events: string; winner: number | null }>();
+      const modeRows = await env.DB.prepare(
+        `SELECT COALESCE(mode, 'pvp') AS m, COUNT(*) AS c FROM battle_reports
+         WHERE status = 'finished'
+           AND events NOT LIKE '%"kind":"debug_enabled"%'
+         GROUP BY m`
+      ).all<{ m: string; c: number }>();
+      const byMode: Record<string, number> = { pvp: 0, pvc: 0, cvc: 0 };
+      for (const r of modeRows.results) byMode[r.m] = r.c;
       type FmtKey = '1v1' | '2v2';
       interface Acc {
         count: number; totalRounds: number;
@@ -857,6 +870,7 @@ export default {
       });
       return new Response(JSON.stringify({
         total: statRows.results.length,
+        byMode,
         '1v1': finalize(acc['1v1']),
         '2v2': finalize(acc['2v2']),
       }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
@@ -872,12 +886,13 @@ export default {
       }
       const row = await env.DB.prepare(
         `SELECT id, title, scenario_id, list1_id, list2_id, player1_alias, player2_alias,
-                status, winner, initial_snapshot, events, final_state, created_at, updated_at
+                status, winner, COALESCE(mode, 'pvp') AS mode,
+                initial_snapshot, events, final_state, created_at, updated_at
          FROM battle_reports WHERE id = ?`
       ).bind(battleMatch[1]).first<{
         id: string; title: string; scenario_id: string | null; list1_id: string; list2_id: string;
         player1_alias: string; player2_alias: string; status: string; winner: number | null;
-        initial_snapshot: string; events: string; final_state: string | null;
+        mode: string; initial_snapshot: string; events: string; final_state: string | null;
         created_at: string; updated_at: string;
       }>();
       if (!row) {
@@ -895,6 +910,7 @@ export default {
         player2Alias: row.player2_alias,
         status: row.status,
         winner: row.winner,
+        mode: row.mode,
         initialSnapshot: JSON.parse(row.initial_snapshot),
         events: JSON.parse(row.events),
         finalState: row.final_state ? JSON.parse(row.final_state) : null,
@@ -915,6 +931,7 @@ export default {
       let body: {
         title: string; scenarioId?: string | null; list1Id: string; list2Id: string;
         player1Alias: string; player2Alias: string; initialSnapshot: unknown;
+        mode?: string;
       };
       try { body = await request.json(); } catch {
         return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
@@ -926,16 +943,17 @@ export default {
           status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
         });
       }
+      const mode = ['pvp', 'pvc', 'cvc'].includes(body.mode ?? '') ? body.mode! : 'pvp';
       const id = generateId();
       const now = new Date().toISOString();
       await env.DB.prepare(
         `INSERT INTO battle_reports
          (id, title, scenario_id, list1_id, list2_id, player1_alias, player2_alias,
-          status, winner, initial_snapshot, events, final_state, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, ?, '[]', NULL, ?, ?)`
+          status, winner, mode, initial_snapshot, events, final_state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, ?, ?, '[]', NULL, ?, ?)`
       ).bind(
         id, body.title, body.scenarioId ?? null, body.list1Id, body.list2Id,
-        body.player1Alias ?? '', body.player2Alias ?? '',
+        body.player1Alias ?? '', body.player2Alias ?? '', mode,
         JSON.stringify(body.initialSnapshot), now, now,
       ).run();
       return new Response(JSON.stringify({ id }), {

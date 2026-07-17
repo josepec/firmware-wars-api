@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS battle_reports (
   player2_alias TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'in_progress',
   winner INTEGER,
+  mode TEXT,
   initial_snapshot TEXT NOT NULL,
   events TEXT NOT NULL DEFAULT '[]',
   final_state TEXT,
