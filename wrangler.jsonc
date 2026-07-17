@@ -23,17 +23,17 @@
   ],
   // Aviso por email de consultas (/api/contact). ACTIVACIÓN (en este orden):
   // 1. Dashboard Cloudflare → josepec.eu → Email → Email Routing → activar.
-  // 2. Destination addresses → añadir y VERIFICAR domo.home.alarm@gmail.com.
+  // 2. Destination addresses → añadir y VERIFICAR josep.enric.ec@gmail.com.
   // 3. Descomentar este bloque y `npx wrangler deploy`.
   // Sin el binding, las consultas se guardan igual (solo se omite el aviso).
-  // "send_email": [
-  //   {
-  //     "name": "SEND_EMAIL",
-  //     "destination_address": "domo.home.alarm@gmail.com"
-  //   }
-  // ],
+   "send_email": [
+     {
+       "name": "SEND_EMAIL",
+       "destination_address": "josep.enric.ec@gmail.com"
+     }
+   ],
   "vars": {
     "CONTACT_EMAIL_FROM": "helpdesk@josepec.eu",
-    "CONTACT_EMAIL_TO": "domo.home.alarm@gmail.com"
+    "CONTACT_EMAIL_TO": "josep.enric.ec@gmail.com"
   }
 }
