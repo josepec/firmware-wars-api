@@ -219,6 +219,7 @@ try {
 
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+  await assertFontsLoaded(page, 'el manual');
 
   /* ── Inyectar custom properties de contenido desde config ── */
   if (ctCfg) {
@@ -307,6 +308,7 @@ try {
   const coverPage = await browser.newPage();
   await coverPage.goto(coverUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await coverPage.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+  await assertFontsLoaded(coverPage, 'la portada');
 
   // Inyectar versión en la portada aislada
   await coverPage.evaluate((ver) => {

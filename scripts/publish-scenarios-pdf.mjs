@@ -167,6 +167,22 @@ function adjustedPageNum(originalPage, removedPages) {
 }
 
 /* 1 — Generate PDF */
+/* ── Comprobación de tipografías ──────────────────────────────
+   La página no se marca lista hasta que las fuentes están cargadas,
+   pero si alguna faltase Chrome maquetaría con la de reserva y el PDF
+   saldría con otro ancho de línea. Mejor abortar que publicar eso. */
+async function assertFontsLoaded(p, donde) {
+  const faltan = await p.evaluate(async () => {
+    await document.fonts.ready;
+    return ['Share Tech Mono', 'Orbitron', 'Rajdhani']
+      .filter(f => !document.fonts.check(`12px "${f}"`));
+  });
+  if (faltan.length) {
+    throw new Error(`Tipografías no cargadas en ${donde}: ${faltan.join(', ')}. `
+      + 'Abortado para no generar un PDF mal maquetado.');
+  }
+}
+
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
 
@@ -181,25 +197,14 @@ try {
 
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 120_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 120_000 });
+  await assertFontsLoaded(page, 'publish-scenarios-pdf.mjs');
 
-  //IMPORTATE: Hay que tocar el valor de zoom si se desajusta
-  /* Inyecta zoom en runtime sobre las páginas de contenido + TOC.
-     Dentro de @media print + !important para ganar al CSS encapsulado de Angular.
-     Independiente del build de Cloudflare. */
-  await page.addStyleTag({
-    content: `
-      @media print {
-        .sp-page.toc-page,
-        .sp-page.scenario-page,
-        .sp-page.scenario-page-right,
-        .sp-page.threat-page,
-        .sp-page.threat-page-right,
-        .sp-page.divider-page {
-          zoom: 0.864 !important;
-        }
-      }
-    `,
-  });
+  /* Aquí vivía un `zoom: 0.864` que compensaba a mano el desajuste de
+     maquetación. La causa real era que el PDF se capturaba antes de que
+     cargasen las tipografías (font-display: swap contra Google Fonts):
+     Chrome maquetaba con la fuente de reserva y salía otro ancho de línea.
+     Con las fuentes auto-alojadas y `signalPdfReady()` esperándolas, el
+     render es determinista y el parche sobra. */
 
   /* ── Inyectar custom properties de contenido desde config ── */
   if (ctCfg) {
@@ -277,6 +282,7 @@ try {
   const coverPage = await browser.newPage();
   await coverPage.goto(coverUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await coverPage.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+  await assertFontsLoaded(coverPage, 'publish-scenarios-pdf.mjs');
 
   // Inyectar versión en la portada aislada
   await coverPage.evaluate((ver) => {

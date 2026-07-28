@@ -176,6 +176,22 @@ function adjustedPageNum(originalPage, removedPages) {
 }
 
 /* 1 — Generar PDF con doble pasada */
+/* ── Comprobación de tipografías ──────────────────────────────
+   La página no se marca lista hasta que las fuentes están cargadas,
+   pero si alguna faltase Chrome maquetaría con la de reserva y el PDF
+   saldría con otro ancho de línea. Mejor abortar que publicar eso. */
+async function assertFontsLoaded(p, donde) {
+  const faltan = await p.evaluate(async () => {
+    await document.fonts.ready;
+    return ['Share Tech Mono', 'Orbitron', 'Rajdhani']
+      .filter(f => !document.fonts.check(`12px "${f}"`));
+  });
+  if (faltan.length) {
+    throw new Error(`Tipografías no cargadas en ${donde}: ${faltan.join(', ')}. `
+      + 'Abortado para no generar un PDF mal maquetado.');
+  }
+}
+
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
 
@@ -190,6 +206,7 @@ try {
 
   await page.goto(printUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await page.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+  await assertFontsLoaded(page, 'publish-campaign-pdf.mjs');
 
   if (ctCfg) {
     await page.evaluate((ct) => {
@@ -272,6 +289,7 @@ try {
   const coverPage = await browser.newPage();
   await coverPage.goto(coverUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
   await coverPage.waitForSelector('body[data-pdf-ready]', { timeout: 60_000 });
+  await assertFontsLoaded(coverPage, 'publish-campaign-pdf.mjs');
 
   await coverPage.evaluate((ver) => {
     const el = document.getElementById('cover-version');
