@@ -204,6 +204,22 @@ function adjustedPageNum(originalPage, removedPages) {
   return originalPage - removedPages.filter(p => p < originalPage).length;
 }
 
+/* ── Comprobación de tipografías ──────────────────────────────
+   La página no se marca lista hasta que las fuentes están cargadas,
+   pero si alguna faltase Chrome maquetaría con la de reserva y el PDF
+   saldría con otro ancho de línea. Mejor abortar que publicar eso. */
+async function assertFontsLoaded(p, donde) {
+  const faltan = await p.evaluate(async () => {
+    await document.fonts.ready;
+    return ['Share Tech Mono', 'Orbitron', 'Rajdhani']
+      .filter(f => !document.fonts.check(`12px "${f}"`));
+  });
+  if (faltan.length) {
+    throw new Error(`Tipografías no cargadas en ${donde}: ${faltan.join(', ')}. `
+      + 'Abortado para no generar un PDF mal maquetado.');
+  }
+}
+
 /* 1 — Generar PDF con doble pasada */
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
