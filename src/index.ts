@@ -34,19 +34,34 @@ function generateId(len = 8): string {
 
 const MAX_PAYLOAD = 32_000;
 
+/** Codifica una cabecera en RFC 2047 si lleva caracteres no ASCII.
+ *  Sin esto, un alias con tilde (o el asunto) rompe el mensaje. */
+function encodeHeader(value: string): string {
+  if (/^[\x20-\x7E]*$/.test(value)) return value;
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(value)));
+  return `=?UTF-8?B?${b64}?=`;
+}
+
+/** Base64 del cuerpo en UTF-8, partido en líneas de 76 caracteres. */
+function encodeBody(text: string): string {
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  return (b64.match(/.{1,76}/g) ?? []).join('\r\n');
+}
+
 /** Aviso por email de una consulta nueva (Email Routing send_email).
- *  Nunca lanza: sin binding/vars o con error, la consulta ya está guardada. */
+ *  Nunca lanza: sin binding/vars o con error, la consulta ya está guardada.
+ *
+ *  OJO con el MIME: Cloudflare valida el mensaje contra RFC 5322 y lo
+ *  rechaza si le falta `Message-ID` o `Date`. El cuerpo va en base64
+ *  porque el texto es UTF-8 y un 8bit sin declarar también lo tumba. */
 async function sendContactEmail(env: Env, name: string, email: string | null, message: string): Promise<void> {
-  if (!env.SEND_EMAIL || !env.CONTACT_EMAIL_FROM || !env.CONTACT_EMAIL_TO) return;
+  if (!env.SEND_EMAIL || !env.CONTACT_EMAIL_FROM || !env.CONTACT_EMAIL_TO) {
+    console.warn('[contact] Aviso omitido: falta SEND_EMAIL, CONTACT_EMAIL_FROM o CONTACT_EMAIL_TO');
+    return;
+  }
   try {
-    const subject = `[Firmware Wars] Consulta de ${name}`.slice(0, 120);
-    const raw = [
-      `From: Firmware Wars Helpdesk <${env.CONTACT_EMAIL_FROM}>`,
-      `To: ${env.CONTACT_EMAIL_TO}`,
-      `Subject: ${subject}`,
-      'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=utf-8',
-      '',
+    const dominio = env.CONTACT_EMAIL_FROM.split('@')[1] ?? 'josepec.eu';
+    const cuerpo = [
       `Alias: ${name}`,
       `Canal de respuesta: ${email ?? '(no indicado)'}`,
       '',
@@ -54,9 +69,26 @@ async function sendContactEmail(env: Env, name: string, email: string | null, me
       '',
       '— Enviado desde /soporte · gestion en /admin/messages',
     ].join('\r\n');
+
+    const raw = [
+      `From: Firmware Wars Helpdesk <${env.CONTACT_EMAIL_FROM}>`,
+      `To: ${env.CONTACT_EMAIL_TO}`,
+      `Message-ID: <${crypto.randomUUID()}@${dominio}>`,
+      `Date: ${new Date().toUTCString()}`,
+      `Subject: ${encodeHeader(`[Firmware Wars] Consulta de ${name}`.slice(0, 120))}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      encodeBody(cuerpo),
+    ].join('\r\n');
+
     await env.SEND_EMAIL.send(new EmailMessage(env.CONTACT_EMAIL_FROM, env.CONTACT_EMAIL_TO, raw));
-  } catch {
-    // El aviso es best-effort
+    console.log('[contact] Aviso enviado a', env.CONTACT_EMAIL_TO);
+  } catch (e) {
+    // Sigue siendo best-effort — la consulta ya está en D1 —, pero ahora
+    // el motivo queda en el log (`npx wrangler tail`) en vez de perderse.
+    console.error('[contact] Fallo al enviar el aviso:', e instanceof Error ? e.message : e);
   }
 }
 
