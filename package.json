@@ -7,7 +7,8 @@
     "deploy": "wrangler deploy",
     "publish": "node scripts/publish-pdf.mjs",
     "publish-scenarios": "node scripts/publish-scenarios-pdf.mjs",
-    "publish-campaign": "node scripts/publish-campaign-pdf.mjs"
+    "publish-campaign": "node scripts/publish-campaign-pdf.mjs",
+    "cards-pdf": "node scripts/generate-cards-pdf.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
